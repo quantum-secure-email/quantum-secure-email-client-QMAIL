@@ -1,0 +1,8 @@
+venv/
+data/
+km_store.json
+devices.json
+*.pyc
+__pycache__/
+.env
+device_registry_local.json
