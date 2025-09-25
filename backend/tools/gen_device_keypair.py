@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
-# tools/gen_device_keypair.py  (overwrite with this version)
+# tools/gen_device_keypair.py  
 import oqs, base64, os
 from pathlib import Path
+
+# python tools/gen_device_keypair.py
+
+
 
 OUT_DIR = Path("data/device_keys")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -25,3 +29,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
+

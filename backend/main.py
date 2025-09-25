@@ -1,17 +1,4 @@
 # main.py
-"""
-Qmail backend (FastAPI) — PQC-enabled using liboqs (Kyber KEM) when available.
-Features:
-- Device registration (device stores its PQC public key)
-- Level 1: passthrough plaintext (no encryption)
-- Level 2: server-side encapsulation (PQC KEM -> derive AES-256-GCM -> encrypt)
-- Level 3: OTP allocation from local KM: KM returns OTP wrapped (encapsulated+AES) for both sender & recipient
-- Debug decrypt endpoints for local testing only (do NOT use in production)
-Notes:
-- This file expects liboqs Python binding (liboqs-python) installed into the backend venv and liboqs C library installed in /usr/local.
-- Health endpoint probes oqs via get_enabled_kem_mechanisms() (new API) and falls back to KeyEncapsulation if needed.
-"""
-
 # uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
 
@@ -46,9 +33,9 @@ class PQCKEM:
         # Determine enabled KEMs using modern API
         get_kems = None
         if hasattr(oqs, "get_enabled_kem_mechanisms"):
-            get_kems = oqs.get_enabled_kem_mechanisms
+            get_kems = oqs.get_enabled_kem_mechanisms # type: ignore
         elif hasattr(oqs, "get_enabled_kems"):
-            get_kems = oqs.get_enabled_kems
+            get_kems = oqs.get_enabled_kems # type: ignore
         if get_kems:
             enabled = list(get_kems())
             if preferred in enabled:
@@ -61,7 +48,7 @@ class PQCKEM:
 
     def generate_keypair(self):
         # Note: some oqs bindings provide export_secret_key; binding semantics vary.
-        with oqs.KeyEncapsulation(self.kem_name) as kem:
+        with oqs.KeyEncapsulation(self.kem_name) as kem: # type: ignore
             pk = kem.generate_keypair()
             try:
                 sk = kem.export_secret_key()
@@ -71,7 +58,7 @@ class PQCKEM:
 
     def encapsulate(self, peer_pub_b64: str):
         peer = base64.b64decode(peer_pub_b64)
-        with oqs.KeyEncapsulation(self.kem_name) as kem:
+        with oqs.KeyEncapsulation(self.kem_name) as kem:# type: ignore
             # Python binding: kem.encap_secret(peer_pub) -> returns (ct, ss) or kem.encap_secret(peer) depending on version
             # We'll try common forms:
             try:
@@ -80,14 +67,14 @@ class PQCKEM:
                 # some bindings return ss only and produce ct via kem.generate_keypair? fallback attempt:
                 ct = kem.generate_keypair()
                 ss = kem.encap_secret(peer)
-            return {"ct_b64": base64.b64encode(ct).decode(), "ss_b64": base64.b64encode(ss).decode()}
+            return {"ct_b64": base64.b64encode(ct).decode(), "ss_b64": base64.b64encode(ss).decode()} # type: ignore
 
     def decapsulate(self, priv_b64: str, ct_b64: str):
         priv = base64.b64decode(priv_b64)
         ct = base64.b64decode(ct_b64)
-        with oqs.KeyEncapsulation(self.kem_name) as kem:
+        with oqs.KeyEncapsulation(self.kem_name) as kem: # type: ignore
             try:
-                ss = kem.decap_secret(priv, ct)
+                ss = kem.decap_secret(priv, ct) # type: ignore
             except TypeError as e:
                 # Some binding shapes may differ; re-raise with context
                 raise RuntimeError(f"decap_secret error: {e}")
@@ -192,7 +179,7 @@ def pqc_available_probe():
     # try modern API
     if hasattr(oqs, "get_enabled_kem_mechanisms"):
         try:
-            kems = list(oqs.get_enabled_kem_mechanisms())
+            kems = list(oqs.get_enabled_kem_mechanisms()) # type: ignore
             return {"oqs": True, "kem_sample": kems[:8]}
         except Exception as e:
             return {"oqs": False, "detail": f"get_enabled_kem_mechanisms error: {e}"}
@@ -207,7 +194,7 @@ def pqc_available_probe():
     # last resort attempt to instantiate
     if hasattr(oqs, "KeyEncapsulation"):
         try:
-            with oqs.KeyEncapsulation("Kyber512") as testkem:
+            with oqs.KeyEncapsulation("Kyber512") as testkem: # type: ignore
                 kem_name = getattr(testkem, "kem_name", None) or getattr(testkem, "name", "Kyber512")
             return {"oqs": True, "kem_algo": kem_name}
         except Exception as e:

@@ -7,6 +7,9 @@ This version tries multiple liboqs-python decapsulation call shapes:
   2) set kem.secret_key = ctypes.create_string_buffer(priv); kem.decap_secret(ct)
 and reports diagnostics if neither works.
 """
+
+# python tools/encrypt_and_local_decrypt_level2.py --device_id "<DEVICE_ID>" --privfile "data/device_keys/device_priv.b64" --message "Demo message 1"
+
 import requests, base64, json, argparse
 from pathlib import Path
 import oqs
@@ -30,7 +33,7 @@ def try_decap_with_various_signatures(kem_name: str, priv_bytes: bytes, kem_ct_b
     try:
         with oqs.KeyEncapsulation(kem_name) as kemtemp:
             try:
-                ss = kemtemp.decap_secret(priv_bytes, kem_ct_bytes)
+                ss = kemtemp.decap_secret(priv_bytes, kem_ct_bytes) # type: ignore
                 return ss
             except TypeError:
                 # signature mismatch for this binding; fallthrough

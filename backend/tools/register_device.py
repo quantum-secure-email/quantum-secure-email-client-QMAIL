@@ -1,5 +1,8 @@
-#!/usr/bin/env python3
 # tools/register_device.py
+
+# python tools/register_device.py --pubb64 "<PASTE_PUB_B64>" --name "achal-laptop"
+# python tools/register_device.py --pubfile filepath --name "achal-laptop"
+
 import json, sys, requests, argparse, base64
 from pathlib import Path
 
@@ -8,8 +11,15 @@ LOCAL_MAP = Path("tools/device_registry_local.json")
 
 def load_map():
     if LOCAL_MAP.exists():
-        return json.loads(LOCAL_MAP.read_text())
+        try:
+            text = LOCAL_MAP.read_text().strip()
+            if not text:
+                return {}
+            return json.loads(text)
+        except Exception:
+            return {}
     return {}
+
 
 def save_map(m):
     LOCAL_MAP.parent.mkdir(parents=True, exist_ok=True)

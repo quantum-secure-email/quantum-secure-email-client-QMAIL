@@ -35,7 +35,7 @@ def main():
     nonce = base64.b64decode(wrapped["nonce_b64"])
 
     with oqs.KeyEncapsulation("Kyber512") as kem:
-        ss = kem.decap_secret(priv, kem_ct)
+        ss = kem.decap_secret(priv, kem_ct) # type: ignore
     aes_key = derive_aes_from_ss(ss)
     aesgcm = AESGCM(aes_key)
     raw_otp = aesgcm.decrypt(nonce, aes_ct, b"qmail-otp-wrap")
