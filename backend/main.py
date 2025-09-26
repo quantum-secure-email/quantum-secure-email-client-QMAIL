@@ -273,45 +273,78 @@ def encrypt(req: EncryptReq):
         raise HTTPException(status_code=400, detail="unknown level")
 
 @app.post("/allocate-otp")
-def allocate_otp(req: AllocateOTPReq):
-    if req.message_length > OTP_KEY_SIZE:
-        raise HTTPException(status_code=400, detail=f"message too big for OTP ({OTP_KEY_SIZE} bytes max)")
-    devices = get_devices()
-    sender = devices.get(req.sender_device_id)
-    rec = devices.get(req.recipient_device_id)
-    if not sender or not rec:
-        raise HTTPException(status_code=404, detail="sender or recipient device not registered")
+def allocate_otp(req: dict):
+    """
+    Allocate an unused OTP key from KM and wrap it separately for sender and recipient.
+    Uses PQC (Kyber512) to securely wrap OTP bytes.
+    """
     km = get_km()
-    unused = next((k for k in km["keys"] if not k["used"]), None)
-    if not unused:
-        raise HTTPException(status_code=500, detail="no OTP keys left")
-    unused["used"] = True
+    sender_id = req["sender_device_id"]
+    recipient_id = req["recipient_device_id"]
+    length = int(req.get("message_length", 100))
+
+    # find an unused OTP key
+    key_id, key_info = None, None
+    for v in km["keys"]:
+        if not v.get("used", False) and len(base64.b64decode(v.get("key_b64", ""))) >= length:
+            key_id, key_info = v["id"], v
+            break
+    if not key_id:
+        raise HTTPException(500, "No available OTP keys in KM")
+
+    if key_info is None:
+        raise HTTPException(500, "No available OTP keys in KM (key_info is None)")
+    otp = base64.b64decode(key_info["key_b64"])[:length]
+
+    # mark as used
+    key_info["used"] = True
     save_km(km)
-    raw_key = base64.b64decode(unused["key_b64"])
-    if not kem:
-        raise HTTPException(status_code=500, detail="PQC KEM not available on server")
-    # wrap to sender
-    wrap_sender = kem.encapsulate(sender["pubkey_b64"])
-    aes_for_sender = derive_aes_from_ss(base64.b64decode(wrap_sender["ss_b64"]))
-    sender_wrap = aes_encrypt(aes_for_sender, raw_key, aad=b"qmail-otp-wrap")
-    # wrap to recipient
-    wrap_rec = kem.encapsulate(rec["pubkey_b64"])
-    aes_for_rec = derive_aes_from_ss(base64.b64decode(wrap_rec["ss_b64"]))
-    rec_wrap = aes_encrypt(aes_for_rec, raw_key, aad=b"qmail-otp-wrap")
+
+    # helper to wrap OTP for a given device
+    def wrap_for_device(device_id: str):
+        devices = get_devices()
+        dev = devices.get(device_id)
+        if not dev:
+            raise HTTPException(404, f"Device {device_id} not found")
+
+        pub_b64 = dev["pubkey_b64"]
+        kem_name = dev.get("algo", "Kyber512")
+        if kem is None:
+            raise HTTPException(status_code=500, detail="PQC KEM not available on server")
+        enc_result = kem.encapsulate(pub_b64)
+        kem_ct = base64.b64decode(enc_result["ct_b64"])
+        ss = base64.b64decode(enc_result["ss_b64"])
+
+        # derive AES key with correct HKDF info
+        aes_key = HKDF(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=None,
+            info=b"qmail-otp-wrap"
+        ).derive(ss)
+
+        # encrypt OTP with AES-GCM (AAD must match client)
+        aesgcm = AESGCM(aes_key)
+        nonce = os.urandom(12)
+        aes_ct = aesgcm.encrypt(nonce, otp, b"qmail-otp-wrap")
+
+        # debug log for cross-check
+        print(f"[DEBUG] wrap_for_device {device_id}: kem={kem_name}, "
+              f"AES key preview={base64.b64encode(aes_key[:8]).decode()}")
+
+        return {
+            "kem_ct_b64": base64.b64encode(kem_ct).decode(),
+            "aes_ct_b64": base64.b64encode(aes_ct).decode(),
+            "nonce_b64": base64.b64encode(nonce).decode(),
+        }
+
     return {
-        "km_key_id": unused["id"],
-        "wrapped_for_sender": {
-            "kem_ct_b64": wrap_sender["ct_b64"],
-            "aes_ct_b64": sender_wrap["ct_b64"],
-            "nonce_b64": sender_wrap["nonce_b64"]
-        },
-        "wrapped_for_recipient": {
-            "kem_ct_b64": wrap_rec["ct_b64"],
-            "aes_ct_b64": rec_wrap["ct_b64"],
-            "nonce_b64": rec_wrap["nonce_b64"]
-        },
-        "note": "Both parties must decapsulate kem_ct with their private key, derive AES key and decrypt aes_ct to obtain OTP key bytes."
+        "km_key_id": key_id,
+        "wrapped_for_sender": wrap_for_device(sender_id),
+        "wrapped_for_recipient": wrap_for_device(recipient_id),
+        "note": "Use your device private key to decapsulate and unwrap OTP locally."
     }
+
 
 # ---------- Debug endpoints (development only) ----------
 @app.post("/debug/decrypt-level2")
