@@ -1,12 +1,4 @@
-#!/usr/bin/env python3
 # tools/encrypt_and_local_decrypt_level2.py
-"""
-Robust end-to-end Level-2 demo (server-side encapsulation + device-side decapsulation).
-This version tries multiple liboqs-python decapsulation call shapes:
-  1) kem.decap_secret(priv, ct)
-  2) set kem.secret_key = ctypes.create_string_buffer(priv); kem.decap_secret(ct)
-and reports diagnostics if neither works.
-"""
 
 # python tools/encrypt_and_local_decrypt_level2.py --device_id "<DEVICE_ID>" --privfile "data/device_keys/device_priv.b64" --message "Demo message 1"
 
