@@ -1,0 +1,6 @@
+# Root ignore (for the full repo)
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+__pycache__/

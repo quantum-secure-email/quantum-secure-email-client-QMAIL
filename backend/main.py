@@ -1,20 +1,24 @@
 # main.py
+# Run with:
 # uvicorn main:app --reload --host 0.0.0.0 --port 8000
-
 
 import os
 import json
 import uuid
 import base64
+import requests
+import email
+import email.policy
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any
 from fastapi import FastAPI, HTTPException, Body
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives import hashes
 
-# ---------- Attempt to import oqs and prepare a KEM wrapper ----------
+# ---------- Optional PQC (liboqs) ----------
 OQS_AVAILABLE = False
 try:
     import oqs  # liboqs-python binding
@@ -23,32 +27,28 @@ except Exception:
     oqs = None
     OQS_AVAILABLE = False
 
-# Provide a thin wrapper around KEM operations that uses oqs.KeyEncapsulation
 class PQCKEM:
     def __init__(self, preferred="Kyber512"):
         if not OQS_AVAILABLE:
             raise RuntimeError("liboqs python binding not available")
-        # Try to pick a reasonable KEM name if preferred not available
         self.preferred = preferred
-        # Determine enabled KEMs using modern API
+        # determine available KEMs using available API names
         get_kems = None
         if hasattr(oqs, "get_enabled_kem_mechanisms"):
-            get_kems = oqs.get_enabled_kem_mechanisms # type: ignore
+            get_kems = oqs.get_enabled_kem_mechanisms
         elif hasattr(oqs, "get_enabled_kems"):
-            get_kems = oqs.get_enabled_kems # type: ignore
+            get_kems = oqs.get_enabled_kems
         if get_kems:
             enabled = list(get_kems())
             if preferred in enabled:
                 self.kem_name = preferred
             else:
-                # fallback to the first enabled KEM (should include Kyber variants)
                 self.kem_name = enabled[0] if enabled else preferred
         else:
             self.kem_name = preferred
 
     def generate_keypair(self):
-        # Note: some oqs bindings provide export_secret_key; binding semantics vary.
-        with oqs.KeyEncapsulation(self.kem_name) as kem: # type: ignore
+        with oqs.KeyEncapsulation(self.kem_name) as kem:
             pk = kem.generate_keypair()
             try:
                 sk = kem.export_secret_key()
@@ -58,29 +58,32 @@ class PQCKEM:
 
     def encapsulate(self, peer_pub_b64: str):
         peer = base64.b64decode(peer_pub_b64)
-        with oqs.KeyEncapsulation(self.kem_name) as kem:# type: ignore
-            # Python binding: kem.encap_secret(peer_pub) -> returns (ct, ss) or kem.encap_secret(peer) depending on version
-            # We'll try common forms:
+        with oqs.KeyEncapsulation(self.kem_name) as kem:
+            # try common binding styles
             try:
-                ct, ss = kem.encap_secret(peer)
+                out = kem.encap_secret(peer)
+                # some bindings return tuple (ct, ss), some return only ss and require other call
+                if isinstance(out, tuple) and len(out) == 2:
+                    ct, ss = out
+                else:
+                    # rare fallback: assume encap_secret returned shared secret and ct produced earlier
+                    ss = out
+                    ct = b""  # not ideal; real binding should return ct
             except TypeError:
-                # some bindings return ss only and produce ct via kem.generate_keypair? fallback attempt:
-                ct = kem.generate_keypair()
-                ss = kem.encap_secret(peer)
-            return {"ct_b64": base64.b64encode(ct).decode(), "ss_b64": base64.b64encode(ss).decode()} # type: ignore
+                # try alternative: some bindings have kem.encapsulate? handle gracefully
+                raise RuntimeError("encapsulation API shape unexpected for binding")
+        return {"ct_b64": base64.b64encode(ct).decode(), "ss_b64": base64.b64encode(ss).decode()}
 
     def decapsulate(self, priv_b64: str, ct_b64: str):
         priv = base64.b64decode(priv_b64)
         ct = base64.b64decode(ct_b64)
-        with oqs.KeyEncapsulation(self.kem_name) as kem: # type: ignore
+        with oqs.KeyEncapsulation(self.kem_name) as kem:
             try:
-                ss = kem.decap_secret(priv, ct) # type: ignore
+                ss = kem.decap_secret(priv, ct)
             except TypeError as e:
-                # Some binding shapes may differ; re-raise with context
                 raise RuntimeError(f"decap_secret error: {e}")
         return base64.b64encode(ss).decode()
 
-# If QPC available, instantiate wrapper
 if OQS_AVAILABLE:
     try:
         kem = PQCKEM(preferred="Kyber512")
@@ -89,14 +92,14 @@ if OQS_AVAILABLE:
 else:
     kem = None
 
-# ---------- Data and KM (simulated) ----------
+# ---------- Data and simulated KM ----------
 DATA_DIR = Path("./data")
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 KM_FILE = DATA_DIR / "km_store.json"
 DEVICES_FILE = DATA_DIR / "devices.json"
 
 NUM_OTP_KEYS = 100
-OTP_KEY_SIZE = 1024  # 1KB per OTP key
+OTP_KEY_SIZE = 1024  # bytes
 
 def load_json(p: Path, default):
     if p.exists():
@@ -107,7 +110,7 @@ def load_json(p: Path, default):
 def save_json(p: Path, obj):
     p.write_text(json.dumps(obj, indent=2))
 
-# initialize KM (simulated QKD origin)
+# initialize KM if missing
 if not KM_FILE.exists():
     km = {"keys": []}
     for _ in range(NUM_OTP_KEYS):
@@ -137,7 +140,7 @@ def get_devices():
 def save_devices(dev):
     save_json(DEVICES_FILE, dev)
 
-# ---------- AES-GCM helpers ----------
+# ---------- AES helpers ----------
 def derive_aes_from_ss(ss_bytes: bytes) -> bytes:
     return HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=b"qmail-aes").derive(ss_bytes)
 
@@ -168,22 +171,38 @@ class EncryptReq(BaseModel):
 class AllocateOTPReq(BaseModel):
     sender_device_id: str
     recipient_device_id: str
-    message_length: int  # bytes (must be <= OTP_KEY_SIZE)
+    message_length: int  # bytes
 
-# ---------- App & health ----------
+class SendEmailReq(BaseModel):
+    access_token: str   # Gmail OAuth2 access token from frontend (short-lived)
+    from_email: str
+    to_email: str
+    subject: Optional[str] = ""
+    body: Optional[str] = ""
+
+# ---------- App ----------
 app = FastAPI(title="Qmail Backend (PQC-enabled)")
 
+# CORS: allow your frontend origins (add your production origin later)
+FRONTEND_ORIGINS = os.environ.get("FRONTEND_ORIGINS", "http://localhost:8080,http://localhost:3000").split(",")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in FRONTEND_ORIGINS if o.strip()],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ---------- Health / PQC probe ----------
 def pqc_available_probe():
     if not OQS_AVAILABLE:
         return {"oqs": False, "detail": "oqs import failed"}
-    # try modern API
     if hasattr(oqs, "get_enabled_kem_mechanisms"):
         try:
-            kems = list(oqs.get_enabled_kem_mechanisms()) # type: ignore
+            kems = list(oqs.get_enabled_kem_mechanisms())
             return {"oqs": True, "kem_sample": kems[:8]}
         except Exception as e:
             return {"oqs": False, "detail": f"get_enabled_kem_mechanisms error: {e}"}
-    # fallback names
     for fn in ("get_enabled_kems", "get_enabled_KEMs"):
         if hasattr(oqs, fn):
             try:
@@ -191,10 +210,9 @@ def pqc_available_probe():
                 return {"oqs": True, "kem_sample": k[:8]}
             except Exception as e:
                 return {"oqs": False, "detail": f"{fn} error: {e}"}
-    # last resort attempt to instantiate
     if hasattr(oqs, "KeyEncapsulation"):
         try:
-            with oqs.KeyEncapsulation("Kyber512") as testkem: # type: ignore
+            with oqs.KeyEncapsulation("Kyber512") as testkem:
                 kem_name = getattr(testkem, "kem_name", None) or getattr(testkem, "name", "Kyber512")
             return {"oqs": True, "kem_algo": kem_name}
         except Exception as e:
@@ -205,25 +223,18 @@ def pqc_available_probe():
 def health():
     return {"ok": True, **pqc_available_probe()}
 
-# ---------- Endpoints ----------
-# Replace the existing register_device function in main.py with this one.
-
+# ---------- Device endpoints ----------
 @app.post("/device/register")
 def register_device(req: DeviceRegister):
     devices = get_devices()
-
-    # First, check if pubkey already registered (enforce one device per pubkey)
+    # enforce single pubkey -> one device id
     for did, info in devices.items():
         if info.get("pubkey_b64") == req.pubkey_b64:
-            # Already registered; return existing device id (idempotent)
             return {"device_id": did, "status": "already_registered", "note": "pubkey already registered"}
-
-    # Not found -> create new device_id and register
     did = req.device_id or str(uuid.uuid4())
     devices[did] = {"pubkey_b64": req.pubkey_b64, "algo": req.algo or (kem.kem_name if kem else "unknown"), "meta": req.meta}
     save_devices(devices)
     return {"device_id": did, "status": "registered"}
-
 
 @app.get("/device/{device_id}")
 def get_device(device_id: str):
@@ -240,6 +251,7 @@ def device_pubkey(device_id: str):
         raise HTTPException(status_code=404, detail="device not found")
     return {"device_id": device_id, "pubkey_b64": d["pubkey_b64"], "algo": d.get("algo")}
 
+# ---------- Encrypt endpoints ----------
 @app.post("/encrypt")
 def encrypt(req: EncryptReq):
     if req.level == 1:
@@ -273,65 +285,41 @@ def encrypt(req: EncryptReq):
         raise HTTPException(status_code=400, detail="unknown level")
 
 @app.post("/allocate-otp")
-def allocate_otp(req: dict):
-    """
-    Allocate an unused OTP key from KM and wrap it separately for sender and recipient.
-    Uses PQC (Kyber512) to securely wrap OTP bytes.
-    """
+def allocate_otp(req: Dict[str, Any]):
     km = get_km()
     sender_id = req["sender_device_id"]
     recipient_id = req["recipient_device_id"]
     length = int(req.get("message_length", 100))
 
-    # find an unused OTP key
-    key_id, key_info = None, None
+    # find unused OTP key with enough length
+    key_id = None
+    key_info = None
     for v in km["keys"]:
         if not v.get("used", False) and len(base64.b64decode(v.get("key_b64", ""))) >= length:
             key_id, key_info = v["id"], v
             break
-    if not key_id:
+    if not key_id or key_info is None:
         raise HTTPException(500, "No available OTP keys in KM")
 
-    if key_info is None:
-        raise HTTPException(500, "No available OTP keys in KM (key_info is None)")
     otp = base64.b64decode(key_info["key_b64"])[:length]
-
-    # mark as used
     key_info["used"] = True
     save_km(km)
 
-    # helper to wrap OTP for a given device
     def wrap_for_device(device_id: str):
         devices = get_devices()
         dev = devices.get(device_id)
         if not dev:
             raise HTTPException(404, f"Device {device_id} not found")
-
         pub_b64 = dev["pubkey_b64"]
-        kem_name = dev.get("algo", "Kyber512")
         if kem is None:
             raise HTTPException(status_code=500, detail="PQC KEM not available on server")
         enc_result = kem.encapsulate(pub_b64)
         kem_ct = base64.b64decode(enc_result["ct_b64"])
         ss = base64.b64decode(enc_result["ss_b64"])
-
-        # derive AES key with correct HKDF info
-        aes_key = HKDF(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=None,
-            info=b"qmail-otp-wrap"
-        ).derive(ss)
-
-        # encrypt OTP with AES-GCM (AAD must match client)
+        aes_key = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=b"qmail-otp-wrap").derive(ss)
         aesgcm = AESGCM(aes_key)
         nonce = os.urandom(12)
         aes_ct = aesgcm.encrypt(nonce, otp, b"qmail-otp-wrap")
-
-        # debug log for cross-check
-        print(f"[DEBUG] wrap_for_device {device_id}: kem={kem_name}, "
-              f"AES key preview={base64.b64encode(aes_key[:8]).decode()}")
-
         return {
             "kem_ct_b64": base64.b64encode(kem_ct).decode(),
             "aes_ct_b64": base64.b64encode(aes_ct).decode(),
@@ -345,10 +333,9 @@ def allocate_otp(req: dict):
         "note": "Use your device private key to decapsulate and unwrap OTP locally."
     }
 
-
-# ---------- Debug endpoints (development only) ----------
+# ---------- Debug endpoints ----------
 @app.post("/debug/decrypt-level2")
-def debug_decrypt_level2(payload: dict = Body(...)):
+def debug_decrypt_level2(payload: Dict[str, Any] = Body(...)):
     required = ["recipient_priv_b64", "kem_ct_b64", "nonce_b64", "ciphertext_b64"]
     if not all(k in payload for k in required):
         raise HTTPException(status_code=400, detail=f"required fields: {required}")
@@ -361,7 +348,7 @@ def debug_decrypt_level2(payload: dict = Body(...)):
     return {"plaintext_b64": base64.b64encode(pt).decode()}
 
 @app.post("/debug/decrypt-otp")
-def debug_decrypt_otp(payload: dict = Body(...)):
+def debug_decrypt_otp(payload: Dict[str, Any] = Body(...)):
     required = ["recipient_priv_b64", "kem_ct_b64", "nonce_b64", "aes_ct_b64"]
     if not all(k in payload for k in required):
         raise HTTPException(status_code=400, detail=f"required fields: {required}")
@@ -372,3 +359,57 @@ def debug_decrypt_otp(payload: dict = Body(...)):
     aes_key = derive_aes_from_ss(ss)
     key_bytes = aes_decrypt(aes_key, payload["nonce_b64"], payload["aes_ct_b64"], aad=b"qmail-otp-wrap")
     return {"raw_key_b64": base64.b64encode(key_bytes).decode()}
+
+# ---------- Gmail helper endpoints (demo: uses client-side token) ----------
+def make_raw_message(from_addr: str, to_addr: str, subject: str, body_text: str) -> str:
+    msg = email.message.EmailMessage(policy=email.policy.SMTP)
+    msg["From"] = from_addr
+    msg["To"] = to_addr
+    msg["Subject"] = subject
+    msg.set_content(body_text)
+    raw_bytes = msg.as_bytes()
+    raw_b64 = base64.urlsafe_b64encode(raw_bytes).rstrip(b"=").decode("ascii")
+    return raw_b64
+
+@app.post("/verify-token")
+def verify_token(payload: Dict[str, Any] = Body(...)):
+    token = payload.get("access_token")
+    if not token:
+        raise HTTPException(status_code=400, detail="access_token required")
+    r = requests.get("https://www.googleapis.com/oauth2/v3/tokeninfo", params={"access_token": token}, timeout=10)
+    if r.status_code != 200:
+        raise HTTPException(status_code=401, detail=f"tokeninfo error: {r.text}")
+    return {"token_info": r.json()}
+
+@app.post("/send-email")
+def send_email(req: SendEmailReq):
+    token = req.access_token
+    if not token:
+        raise HTTPException(status_code=400, detail="access_token required")
+
+    ti = requests.get("https://www.googleapis.com/oauth2/v3/tokeninfo", params={"access_token": token}, timeout=10)
+    if ti.status_code != 200:
+        raise HTTPException(status_code=401, detail=f"tokeninfo failed: {ti.text}")
+    info = ti.json()
+    scopes = info.get("scope", "")
+    required = {
+    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/gmail.modify",
+    # optional: accept full mailbox scope too
+    "https://mail.google.com/"
+}
+    present = set(scopes.split())  # tokeninfo returns lowercase space-separated list
+    if not (present & required):
+        raise HTTPException(status_code=403, detail=f"insufficient scopes on token: {scopes}")
+
+
+    raw_b64 = make_raw_message(req.from_email, req.to_email, req.subject or "", req.body or "")
+    gmail_send_url = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    payload = {"raw": raw_b64}
+    r = requests.post(gmail_send_url, headers=headers, json=payload, timeout=15)
+    if r.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"Gmail API error ({r.status_code}): {r.text}")
+    return {"ok": True, "gmail_response": r.json()}
+
+# ---------- End ----------
