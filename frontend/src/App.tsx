@@ -10,6 +10,7 @@ import Compose from "./pages/Compose";
 import GroupThreads from "./pages/GroupThreads";
 import SettingsPage from "./pages/SettingsPage";
 import NotFound from "./pages/NotFound";
+import Inbox from "./pages/Inbox";
 
 const queryClient = new QueryClient();
 
@@ -23,10 +24,10 @@ const App = () => (
           <Routes>
             <Route path="/" element={<Login />} />
             <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/inbox" element={<Inbox />} />  {/* ADD THIS */}
             <Route path="/compose" element={<Compose />} />
             <Route path="/threads" element={<GroupThreads />} />
             <Route path="/settings" element={<SettingsPage />} />
-            {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>

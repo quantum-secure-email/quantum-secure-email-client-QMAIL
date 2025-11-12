@@ -5,14 +5,27 @@ import GoogleSignIn from '@/components/GoogleSignIn';
 import { Shield, Lock, Zap } from 'lucide-react';
 
 const Login = () => {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, loading } = useAuth();
   const navigate = useNavigate();
-
+  
+  // ✅ HOOK FIRST - before any conditional returns
   useEffect(() => {
     if (isAuthenticated) {
       navigate('/dashboard');
     }
   }, [isAuthenticated, navigate]);
+
+  // ✅ THEN conditional rendering
+  if (loading) {
+    return (
+      <div className="flex min-h-screen w-full items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-muted-foreground">Checking authentication...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen w-full items-center justify-center bg-gradient-to-br from-background via-background to-secondary">
@@ -90,9 +103,8 @@ const Login = () => {
 
                 <div className="rounded-lg border border-border bg-muted/50 p-4">
                   <p className="text-xs text-muted-foreground">
-                    <strong>Note:</strong> To enable Google Sign-In, you need to configure your
-                    Google OAuth client ID. Visit the Google Cloud Console to set up your OAuth 2.0
-                    credentials and replace the client ID in GoogleSignIn.tsx.
+                    <strong>Secure OAuth:</strong> Your credentials are handled by Google's
+                    secure authentication. We never see your password.
                   </p>
                 </div>
               </div>

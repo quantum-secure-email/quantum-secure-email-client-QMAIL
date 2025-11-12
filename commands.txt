@@ -1,0 +1,8 @@
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
+
+vinofallen@Achals-Legion-5i:~/Qmail/backend$ sudo service postgresql start
+[sudo] password for vinofallen: 
+ * Starting PostgreSQL 16 database server           [ OK ] 
+(venv) vinofallen@Achals-Legion-5i:~/Qmail/backend$ sudo service postgresql status
+
+npm run dev

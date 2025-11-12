@@ -1,155 +1,54 @@
-import { useEffect } from "react";
-import { useAuth } from "@/contexts/AuthContext";
-import { useNavigate } from "react-router-dom";
-import { toast } from "sonner";
+import { Button } from '@/components/ui/button';
 
-declare global {
-  interface Window {
-    google: any;
-  }
-}
+const GoogleSignIn = () => {
+  const apiUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
-interface GoogleSignInProps {
-  onSuccess?: () => void;
-}
-
-// Full Gmail scope (use the one you configured)
-const GMAIL_SCOPES = "https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send";
-
-const GoogleSignIn = ({ onSuccess }: GoogleSignInProps) => {
-  const { login } = useAuth();
-  const navigate = useNavigate();
-
-  useEffect(() => {
-    const script = document.createElement("script");
-    script.src = "https://accounts.google.com/gsi/client";
-    script.async = true;
-    script.defer = true;
-    document.body.appendChild(script);
-
-    script.onload = () => {
-      if (!window.google) {
-        console.error("GIS library not loaded");
-        return;
-      }
-
-      // initialize ID token flow
-      try {
-        window.google.accounts.id.initialize({
-          client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID,
-          callback: handleCredentialResponse,
-          ux_mode: "popup",
-          auto_select: false,
-        });
-
-        window.google.accounts.id.renderButton(
-          document.getElementById("google-signin-button"),
-          { theme: "outline", size: "large", width: 280, text: "signin_with" }
-        );
-
-        // one-time console statement
-        console.info("[GIS] id.initialize and renderButton completed");
-      } catch (e) {
-        console.error("GIS initialize failed:", e);
-      }
-    };
-
-    return () => {
-      try {
-        document.body.removeChild(script);
-      } catch {}
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Creates a token client on-demand (inside the user gesture) and requests access token
-  const createAndRequestToken = (loginHint?: string) => {
-    if (!window.google || !window.google.accounts || !window.google.accounts.oauth2) {
-      console.error("google.accounts.oauth2 not available to init token client");
-      toast.error("Internal error: OAuth client not ready");
-      return;
-    }
-
-    const tc = window.google.accounts.oauth2.initTokenClient({
-      client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID,
-      scope: GMAIL_SCOPES,
-      // The callback receives the token response when successful (or an error)
-      callback: (resp: any) => {
-        if (resp.error) {
-          console.error("[token-client] error:", resp);
-          toast.error("Failed to obtain Gmail token");
-          return;
-        }
-        // Store access token for backend calls
-        console.info("[token-client] access_token received, expires_in:", resp.expires_in);
-        sessionStorage.setItem("gmail_access_token", resp.access_token);
-        sessionStorage.setItem("gmail_token_expires_in", String(resp.expires_in || 0));
-        toast.success("Gmail permission granted");
-      },
-    });
-
-    // Request the token immediately — must be called inside a user gesture.
-    try {
-      // If loginHint provided use it
-      const opts: any = { prompt: "consent" }; // force consent
-      if (loginHint) opts.login_hint = loginHint;
-      tc.requestAccessToken(opts);
-      console.info("[token-client] requestAccessToken called (prompt: consent)");
-    } catch (e) {
-      console.error("[token-client] requestAccessToken threw:", e);
-      toast.error("Could not request Gmail token");
-    }
-  };
-
-  // Called when Google returns an ID token (after user clicked the rendered button)
-  const handleCredentialResponse = (response: any) => {
-    try {
-      console.info("[GIS] Got credential response");
-      const token = response.credential;
-      if (!token) {
-        throw new Error("No ID token returned");
-      }
-
-      // parse ID token payload safely
-      const base64Url = token.split(".")[1];
-      const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
-      const jsonPayload = decodeURIComponent(
-        atob(base64)
-          .split("")
-          .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
-          .join("")
-      );
-      const userData = JSON.parse(jsonPayload);
-
-      // Save auth in context
-      login({
-        name: userData.name,
-        email: userData.email,
-        picture: userData.picture,
-        token: token,
-      });
-
-      toast.success("Signed in (ID token). Now requesting Gmail permission...");
-
-      // Immediately create token client and request access token while inside this user gesture.
-      // Pass login_hint so Google reuses the same account if needed.
-      createAndRequestToken(userData.email);
-
-      if (onSuccess) onSuccess();
-      else navigate("/dashboard");
-    } catch (error) {
-      console.error("Error handling credential response:", error);
-      toast.error("Sign-in failed");
-    }
+  const handleGoogleLogin = () => {
+    console.log('Redirecting to backend OAuth:', `${apiUrl}/auth/login`);
+    // Redirect to backend OAuth endpoint
+    window.location.href = `${apiUrl}/auth/login`;
   };
 
   return (
     <div className="flex flex-col items-center gap-4">
-      <div id="google-signin-button" />
-      <p className="text-sm text-muted-foreground">Sign in with your Google account to access Qmail</p>
-      <small className="text-xs text-muted-foreground mt-2">
-        You will be prompted to grant Gmail permissions when you sign in (if required).
-      </small>
+      <Button
+        onClick={handleGoogleLogin}
+        className="w-full"
+        size="lg"
+        variant="default"
+      >
+        <svg className="mr-2 h-5 w-5" viewBox="0 0 24 24">
+          <path
+            fill="currentColor"
+            d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+          />
+          <path
+            fill="currentColor"
+            d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+          />
+          <path
+            fill="currentColor"
+            d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+          />
+          <path
+            fill="currentColor"
+            d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+          />
+        </svg>
+        Sign in with Google
+      </Button>
+      
+      <p className="text-sm text-muted-foreground text-center">
+        Sign in with your Google account to access Qmail
+      </p>
+      
+      <div className="text-xs text-muted-foreground text-center mt-2">
+        <p>You'll be asked to grant Gmail permissions:</p>
+        <ul className="mt-1 space-y-1">
+          <li>• Read, send, and manage your email</li>
+          <li>• View your email address</li>
+        </ul>
+      </div>
     </div>
   );
 };

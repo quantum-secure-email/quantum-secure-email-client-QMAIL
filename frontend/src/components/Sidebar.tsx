@@ -1,59 +1,60 @@
-import { NavLink } from 'react-router-dom';
-import { Home, Send, Users, Settings, Shield } from 'lucide-react';
+import { Link, useLocation } from 'react-router-dom';
+import { Home, Mail, Send, Users, Settings, Shield } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-const navigation = [
-  { name: 'Dashboard', to: '/dashboard', icon: Home },
-  { name: 'Compose Email', to: '/compose', icon: Send },
-  { name: 'Group Threads', to: '/threads', icon: Users },
-  { name: 'Settings', to: '/settings', icon: Settings },
-];
-
 const Sidebar = () => {
+  const location = useLocation();
+
+  const navItems = [
+    { path: '/dashboard', icon: Home, label: 'Dashboard' },
+    { path: '/inbox', icon: Mail, label: 'Inbox' },
+    { path: '/compose', icon: Send, label: 'Compose' },
+    { path: '/threads', icon: Users, label: 'Groups' },
+    { path: '/settings', icon: Settings, label: 'Settings' },
+  ];
+
   return (
-    <div className="flex h-full w-64 flex-col border-r border-border bg-card">
-      {/* Logo */}
-      <div className="flex h-16 items-center gap-3 border-b border-border px-6">
-        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-accent">
-          <Shield className="h-5 w-5 text-primary-foreground" />
-        </div>
-        <div>
-          <h1 className="text-xl font-bold text-foreground">Qmail</h1>
-          <p className="text-xs text-muted-foreground">Quantum Secure</p>
+    <div className="w-64 bg-card border-r h-full flex flex-col">
+      <div className="p-6 border-b">
+        <div className="flex items-center gap-2">
+          <Shield className="w-8 h-8 text-primary" />
+          <div>
+            <h1 className="text-xl font-bold">QMail</h1>
+            <p className="text-xs text-muted-foreground">Quantum Secure</p>
+          </div>
         </div>
       </div>
 
-      {/* Navigation */}
-      <nav className="flex-1 space-y-1 p-4">
-        {navigation.map((item) => (
-          <NavLink
-            key={item.name}
-            to={item.to}
-            className={({ isActive }) =>
-              cn(
-                'flex items-center gap-3 rounded-lg px-4 py-3 text-sm font-medium transition-all duration-200',
-                isActive
-                  ? 'bg-primary text-primary-foreground shadow-sm'
-                  : 'text-muted-foreground hover:bg-secondary hover:text-foreground'
-              )
-            }
-          >
-            <item.icon className="h-5 w-5" />
-            {item.name}
-          </NavLink>
-        ))}
+      <nav className="flex-1 p-4">
+        <ul className="space-y-2">
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = location.pathname === item.path;
+
+            return (
+              <li key={item.path}>
+                <Link
+                  to={item.path}
+                  className={cn(
+                    'flex items-center gap-3 px-4 py-3 rounded-lg transition-colors',
+                    isActive
+                      ? 'bg-primary text-primary-foreground'
+                      : 'hover:bg-accent'
+                  )}
+                >
+                  <Icon className="w-5 h-5" />
+                  <span className="font-medium">{item.label}</span>
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
       </nav>
 
-      {/* Footer */}
-      <div className="border-t border-border p-4">
-        <div className="rounded-lg bg-gradient-to-br from-primary/10 to-accent/10 p-4">
-          <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-            <Shield className="h-4 w-4 text-primary" />
-            <span>Quantum Protected</span>
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Your emails are secured with post-quantum encryption
-          </p>
+      <div className="p-4 border-t">
+        <div className="text-xs text-muted-foreground">
+          <p>Post-Quantum Encryption</p>
+          <p className="font-mono">Kyber512 • AES-256</p>
         </div>
       </div>
     </div>

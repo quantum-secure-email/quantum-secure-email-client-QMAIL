@@ -6,3 +6,11 @@ devices.json
 __pycache__/
 .env
 device_registry_local.json
+.env
+venv/
+__pycache__/
+*.pyc
+alembic/versions/*.pyc
+data/
+*.db
+*.sqlite
