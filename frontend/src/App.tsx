@@ -11,6 +11,7 @@ import GroupThreads from "./pages/GroupThreads";
 import SettingsPage from "./pages/SettingsPage";
 import NotFound from "./pages/NotFound";
 import Inbox from "./pages/Inbox";
+import AuthComplete from './pages/AuthComplete';
 
 const queryClient = new QueryClient();
 
@@ -28,6 +29,7 @@ const App = () => (
             <Route path="/compose" element={<Compose />} />
             <Route path="/threads" element={<GroupThreads />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/auth/complete" element={<AuthComplete />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>

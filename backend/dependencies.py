@@ -1,4 +1,4 @@
-from fastapi import Depends, HTTPException, status, Cookie
+from fastapi import Depends, HTTPException, status, Cookie, Header
 from fastapi.security import HTTPBearer
 from sqlalchemy.orm import Session
 from typing import Optional
@@ -11,12 +11,29 @@ security = HTTPBearer(auto_error=False)
 
 async def get_current_user(
     session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
     db: Session = Depends(get_db)
 ) -> User:
     """
-    Get current authenticated user from session cookie
+    Get current authenticated user from session cookie OR Authorization header
+    
+    This supports both:
+    1. Cookie-based auth (same-origin requests)
+    2. Bearer token in Authorization header (cross-origin requests)
     """
-    if not session_token:
+    
+    # Try to get token from Authorization header first (for cross-origin)
+    token = None
+    
+    if authorization and authorization.startswith('Bearer '):
+        token = authorization.replace('Bearer ', '')
+        print(f"✓ Token from Authorization header")
+    elif session_token:
+        token = session_token
+        print(f"✓ Token from Cookie")
+    
+    if not token:
+        print(f"✗ No token found in Cookie or Authorization header")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
@@ -24,8 +41,9 @@ async def get_current_user(
         )
     
     # Verify JWT token
-    payload = verify_token(session_token)
+    payload = verify_token(token)
     if not payload:
+        print(f"✗ Invalid token")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication credentials",
@@ -34,20 +52,35 @@ async def get_current_user(
     
     user_id: int = payload.get("sub")
     if user_id is None:
+        print(f"✗ No user_id in token")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
+    # Convert to integer if it's a string (JWT spec requires sub to be string)
+    if isinstance(user_id, str):
+        try:
+            user_id = int(user_id)
+        except ValueError:
+            print(f"✗ Invalid user_id format: {user_id}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authentication credentials",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    
     # Get user from database
     user = db.query(User).filter(User.id == user_id).first()
     if user is None:
+        print(f"✗ User {user_id} not found in database")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found"
         )
     
+    print(f"✓ User authenticated: {user.email}")
     return user
 
 async def get_valid_oauth_token(

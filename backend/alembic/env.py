@@ -1,3 +1,13 @@
+"""
+Enhanced Alembic Environment Configuration
+This version reads DATABASE_URL from .env file for better security
+
+To use this version:
+1. Rename this file to env.py (replacing the existing one)
+2. Make sure you have python-dotenv installed: pip install python-dotenv
+3. Your .env file should have DATABASE_URL set
+"""
+
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config
@@ -5,20 +15,39 @@ from sqlalchemy import pool
 
 from alembic import context
 
+import os
+import sys
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Add the parent directory to the path so we can import our models
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+# Import your models here
+from models import Base
+
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
+
+# Override the sqlalchemy.url with the one from environment variables
+# This is more secure than hardcoding it in alembic.ini
+database_url = os.getenv("DATABASE_URL")
+if database_url:
+    config.set_main_option("sqlalchemy.url", database_url)
+else:
+    print("WARNING: DATABASE_URL not found in environment variables")
+    print("Falling back to alembic.ini configuration")
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# add your model's MetaData object here
-# for 'autogenerate' support
-# from myapp import mymodel
-# target_metadata = mymodel.Base.metadata
-target_metadata = None
+# add your model's MetaData object here for 'autogenerate' support
+target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:

@@ -155,22 +155,13 @@ async def callback(code: str, state: str, db: Session = Depends(get_db)):
         db.commit()
         
         # Create session token (JWT)
-        session_token = create_access_token(data={"sub": user.id})
+        session_token = create_access_token(data={"sub": str(user.id)})
         print(f"✓ Created session token for user: {email}")
         
         # Redirect to frontend with session cookie
-        response = RedirectResponse(url=f"{FRONTEND_URL}/dashboard")
-        response.set_cookie(
-            key="session_token",
-            value=session_token,
-            httponly=True,
-            secure=False,  # Set to True in production with HTTPS
-            samesite="lax",
-            max_age=60 * 60 * 24 * 7  # 7 days
-        )
-        
-        print(f"✓✓✓ User {email} authenticated successfully - redirecting to dashboard")
-        return response
+        redirect_url = f"{FRONTEND_URL}/auth/complete?token={session_token}"
+        print(f"✓✓✓ Redirecting to: {redirect_url}")
+        return RedirectResponse(url=redirect_url)
         
     except Exception as e:
         print(f"✗ OAuth callback error: {e}")

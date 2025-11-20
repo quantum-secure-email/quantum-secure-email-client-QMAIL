@@ -6,3 +6,7 @@ vinofallen@Achals-Legion-5i:~/Qmail/backend$ sudo service postgresql start
 (venv) vinofallen@Achals-Legion-5i:~/Qmail/backend$ sudo service postgresql status
 
 npm run dev
+
+
+psql -U qmail_user -d qmail_db -h localhost -c "SELECT id, email, name, created_at FROM users;"
+password = qmail_password_2024
