@@ -18,13 +18,33 @@ class GmailService:
         )
         self.service = build('gmail', 'v1', credentials=self.credentials)
     
-    def list_messages(self, max_results: int = 50, page_token: Optional[str] = None) -> Dict:
-        """List messages in inbox"""
+    def list_messages(
+        self, 
+        max_results: int = 50, 
+        page_token: Optional[str] = None,
+        primary_only: bool = True
+    ) -> Dict:
+        """
+        List messages in inbox
+        
+        Args:
+            max_results: Maximum number of messages to return
+            page_token: Token for pagination
+            primary_only: If True, only show Primary inbox emails (exclude Promotions, Social, Updates)
+        """
         try:
+            # Build query to filter primary emails only
+            query = None
+            if primary_only:
+                # Gmail categories: CATEGORY_PERSONAL (Primary), CATEGORY_SOCIAL, CATEGORY_PROMOTIONS, CATEGORY_UPDATES
+                # We want to exclude the promotional categories
+                query = 'category:primary'
+            
             results = self.service.users().messages().list(
                 userId='me',
                 maxResults=max_results,
-                pageToken=page_token
+                pageToken=page_token,
+                q=query  # Filter query
             ).execute()
             
             messages = results.get('messages', [])
@@ -52,6 +72,36 @@ class GmailService:
             print(f"Error getting message: {e}")
             raise
     
+    def mark_as_read(self, message_id: str) -> Dict:
+        """Mark a message as read by removing the UNREAD label"""
+        try:
+            result = self.service.users().messages().modify(
+                userId='me',
+                id=message_id,
+                body={'removeLabelIds': ['UNREAD']}
+            ).execute()
+            
+            print(f"✓ Marked message {message_id} as read")
+            return {"success": True, "message_id": message_id, "status": "read"}
+        except Exception as e:
+            print(f"✗ Error marking message as read: {e}")
+            raise
+    
+    def mark_as_unread(self, message_id: str) -> Dict:
+        """Mark a message as unread by adding the UNREAD label"""
+        try:
+            result = self.service.users().messages().modify(
+                userId='me',
+                id=message_id,
+                body={'addLabelIds': ['UNREAD']}
+            ).execute()
+            
+            print(f"✓ Marked message {message_id} as unread")
+            return {"success": True, "message_id": message_id, "status": "unread"}
+        except Exception as e:
+            print(f"✗ Error marking message as unread: {e}")
+            raise
+    
     def _parse_message(self, message: Dict) -> Dict:
         """Parse Gmail message into readable format"""
         payload = message.get('payload', {})
@@ -69,6 +119,10 @@ class GmailService:
         # Detect encryption markers
         encryption_type = self._detect_encryption(body)
         
+        # Check if message is unread
+        label_ids = message.get('labelIds', [])
+        is_unread = 'UNREAD' in label_ids
+        
         return {
             "id": message['id'],
             "threadId": message.get('threadId'),
@@ -79,7 +133,8 @@ class GmailService:
             "date": date_str,
             "body": body,
             "encryption_type": encryption_type,
-            "labelIds": message.get('labelIds', [])
+            "labelIds": label_ids,
+            "isUnread": is_unread
         }
     
     def _get_header(self, headers: List[Dict], name: str) -> str:
@@ -122,7 +177,7 @@ class GmailService:
     def send_message(self, to: str, subject: str, body: str, from_email: str = 'me') -> Dict:
         """Send an email"""
         try:
-            message = MIMEText(body)
+            message = MIMEText(body, 'html')  # Support HTML body
             message['to'] = to
             message['subject'] = subject
             
@@ -133,7 +188,8 @@ class GmailService:
                 body={'raw': raw_message}
             ).execute()
             
+            print(f"✓ Email sent successfully: {send_message['id']}")
             return send_message
         except Exception as e:
-            print(f"Error sending message: {e}")
+            print(f"✗ Error sending message: {e}")
             raise

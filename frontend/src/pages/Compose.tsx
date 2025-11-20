@@ -6,8 +6,20 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Shield, Send, Info } from 'lucide-react';
+import { Shield, Send, Info, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
+
+// Helper to get token from cookie
+const getTokenFromCookie = (): string | null => {
+  const cookies = document.cookie.split(';');
+  for (const cookie of cookies) {
+    const [name, value] = cookie.trim().split('=');
+    if (name === 'session_token') {
+      return value;
+    }
+  }
+  return null;
+};
 
 const Compose = () => {
   const [recipient, setRecipient] = useState('');
@@ -15,29 +27,74 @@ const Compose = () => {
   const [message, setMessage] = useState('');
   const [encryptionLevel, setEncryptionLevel] = useState('1');
   const [sending, setSending] = useState(false);
+  const [recipientInfo, setRecipientInfo] = useState<any>(null);
+  const [checkingRecipient, setCheckingRecipient] = useState(false);
+
+  const apiUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
   const encryptionLevels = [
     {
       value: '1',
       label: 'Level 1: Normal Gmail',
-      description: 'Standard email encryption',
+      description: 'Standard email encryption (TLS only)',
       color: 'text-muted-foreground',
+      requiresDevice: false,
     },
     {
       value: '2',
       label: 'Level 2: Post-Quantum (Kyber + AES-GCM)',
       description: 'Quantum-resistant encryption with Kyber algorithm',
       color: 'text-primary',
+      requiresDevice: true,
     },
     {
       value: '3',
       label: 'Level 3: OTP + QKD',
-      description: 'One-Time Pad with Quantum Key Distribution',
+      description: 'One-Time Pad with Quantum Key Distribution (Maximum Security)',
       color: 'text-accent',
+      requiresDevice: true,
     },
   ];
 
   const selectedLevel = encryptionLevels.find((level) => level.value === encryptionLevel);
+
+  // Check if recipient has a registered device
+  const checkRecipient = async (email: string) => {
+    if (!email || !email.includes('@')) return;
+
+    setCheckingRecipient(true);
+    const token = getTokenFromCookie();
+
+    try {
+      const response = await fetch(`${apiUrl}/api/compose/check-recipient/${encodeURIComponent(email)}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setRecipientInfo(data);
+        
+        if (!data.has_device && (encryptionLevel === '2' || encryptionLevel === '3')) {
+          toast.warning('Recipient has no encryption device', {
+            description: 'Level 2 and 3 encryption require the recipient to have registered a device.',
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Error checking recipient:', error);
+    } finally {
+      setCheckingRecipient(false);
+    }
+  };
+
+  // Handle recipient blur to check for device
+  const handleRecipientBlur = () => {
+    if (recipient) {
+      checkRecipient(recipient);
+    }
+  };
 
   const handleSend = async () => {
     if (!recipient || !subject || !message) {
@@ -52,42 +109,61 @@ const Compose = () => {
       return;
     }
 
+    // Check if encryption level requires device
+    const level = parseInt(encryptionLevel);
+    if ((level === 2 || level === 3) && (!recipientInfo || !recipientInfo.has_device)) {
+      toast.error('Encryption level requires recipient device', {
+        description: 'Please choose Level 1 or ask the recipient to register a device in QMail.',
+      });
+      return;
+    }
+
     setSending(true);
+    const token = getTokenFromCookie();
 
     try {
-      // Mock API call - replace with actual endpoint
-      const response = await fetch('/api/send-email', {
+      const response = await fetch(`${apiUrl}/api/compose/send`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({
-          recipient,
-          subject,
-          message,
-          encryptionLevel,
+          to: recipient,
+          subject: subject,
+          message: message,
+          encryption_level: level,
+          recipient_device_id: recipientInfo?.device_id || null,
         }),
       });
 
-      // Since this is a mock, we'll simulate success
-      setTimeout(() => {
-        toast.success(
-          `Email sent successfully using ${selectedLevel?.label}!`,
-          {
-            description: `Your message to ${recipient} has been encrypted and delivered.`,
-          }
-        );
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || 'Failed to send email');
+      }
 
-        // Reset form
-        setRecipient('');
-        setSubject('');
-        setMessage('');
-        setEncryptionLevel('1');
-        setSending(false);
-      }, 1500);
-    } catch (error) {
+      const result = await response.json();
+
+      toast.success(
+        `Email sent successfully using ${selectedLevel?.label}!`,
+        {
+          description: `Your message to ${recipient} has been encrypted and delivered.`,
+        }
+      );
+
+      // Reset form
+      setRecipient('');
+      setSubject('');
+      setMessage('');
+      setEncryptionLevel('1');
+      setRecipientInfo(null);
+      
+    } catch (error: any) {
       console.error('Error sending email:', error);
-      toast.error('Failed to send email. Please try again.');
+      toast.error('Failed to send email', {
+        description: error.message || 'Please try again.',
+      });
+    } finally {
       setSending(false);
     }
   };
@@ -121,7 +197,17 @@ const Compose = () => {
                 placeholder="recipient@example.com"
                 value={recipient}
                 onChange={(e) => setRecipient(e.target.value)}
+                onBlur={handleRecipientBlur}
               />
+              {recipientInfo && (
+                <p className="text-sm text-muted-foreground">
+                  {recipientInfo.has_device ? (
+                    <span className="text-green-600">✓ Recipient has encryption device ready</span>
+                  ) : (
+                    <span className="text-yellow-600">⚠ Recipient has no encryption device (Level 1 only)</span>
+                  )}
+                </p>
+              )}
             </div>
 
             <div className="space-y-2">
@@ -154,8 +240,13 @@ const Compose = () => {
                 </SelectTrigger>
                 <SelectContent>
                   {encryptionLevels.map((level) => (
-                    <SelectItem key={level.value} value={level.value}>
+                    <SelectItem 
+                      key={level.value} 
+                      value={level.value}
+                      disabled={level.requiresDevice && (!recipientInfo || !recipientInfo.has_device)}
+                    >
                       {level.label}
+                      {level.requiresDevice && ' (requires device)'}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -174,6 +265,20 @@ const Compose = () => {
                   </div>
                 </div>
               )}
+
+              {selectedLevel?.requiresDevice && (!recipientInfo || !recipientInfo.has_device) && (
+                <div className="flex items-start gap-2 rounded-lg border border-yellow-500/50 bg-yellow-500/10 p-3">
+                  <AlertCircle className="mt-0.5 h-4 w-4 text-yellow-600" />
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium text-yellow-900 dark:text-yellow-100">
+                      Recipient Device Required
+                    </p>
+                    <p className="text-xs text-yellow-700 dark:text-yellow-300">
+                      The recipient must register a device in QMail to receive encrypted emails at this level.
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="flex items-center justify-between border-t border-border pt-4">
@@ -186,7 +291,7 @@ const Compose = () => {
                 variant="quantum"
                 size="lg"
                 onClick={handleSend}
-                disabled={sending}
+                disabled={sending || checkingRecipient}
               >
                 <Send className="mr-2 h-4 w-4" />
                 {sending ? 'Sending...' : 'Send Email'}
@@ -201,16 +306,18 @@ const Compose = () => {
           </CardHeader>
           <CardContent className="space-y-2 text-sm text-muted-foreground">
             <p>
-              <strong className="text-foreground">Level 1:</strong> Uses standard email
-              encryption. Suitable for non-sensitive communications.
+              <strong className="text-foreground">Level 1:</strong> Uses standard Gmail
+              encryption (TLS). Suitable for non-sensitive communications. Works with any email address.
             </p>
             <p>
               <strong className="text-foreground">Level 2:</strong> Implements post-quantum
-              cryptography using the Kyber algorithm, protecting against future quantum attacks.
+              cryptography using the Kyber512 algorithm, protecting against future quantum attacks.
+              Requires recipient to have a registered device.
             </p>
             <p>
               <strong className="text-foreground">Level 3:</strong> Maximum security using
-              One-Time Pad encryption with Quantum Key Distribution for unbreakable encryption.
+              One-Time Pad encryption with Quantum Key Distribution for theoretically unbreakable encryption.
+              Requires recipient to have a registered device.
             </p>
           </CardContent>
         </Card>
