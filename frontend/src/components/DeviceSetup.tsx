@@ -1,19 +1,9 @@
-/**
- * DeviceSetup Component
- * Automatically runs after OAuth login to:
- * 1. Check if user has a device registered
- * 2. If not, generate Kyber512 keypair client-side
- * 3. Store private key in IndexedDB
- * 4. Send public key to backend
- */
-
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Progress } from '@/components/ui/progress';
 import { Shield, Check, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
-import { generateKyberKeypair, uint8ArrayToBase64 } from '@/utils/kyberCrypto';
 import { storePrivateKey, hasPrivateKeys } from '@/utils/indexedDB';
 
 const DeviceSetup = () => {
@@ -40,14 +30,27 @@ const DeviceSetup = () => {
         return;
       }
 
-      // Step 2: Generate Kyber512 keypair
+      // Step 2: Generate Kyber512 keypair via BACKEND
       setStatus('generating');
       setProgress(30);
       toast.info('Generating encryption keys...');
 
-      const keypair = await generateKyberKeypair();
-      const publicKeyB64 = uint8ArrayToBase64(keypair.publicKey);
-      const privateKeyB64 = uint8ArrayToBase64(keypair.privateKey);
+      const token = getTokenFromCookie();
+      
+      // Call backend to generate keypair
+      const keypairResponse = await fetch(`${apiUrl}/device/generate-keypair`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+        credentials: 'include',
+      });
+
+      if (!keypairResponse.ok) {
+        throw new Error('Failed to generate keypair on server');
+      }
+
+      const { public_key_b64: publicKeyB64, private_key_b64: privateKeyB64 } = await keypairResponse.json();
 
       setProgress(60);
 
@@ -55,7 +58,6 @@ const DeviceSetup = () => {
       setStatus('registering');
       toast.info('Registering device...');
 
-      const token = getTokenFromCookie();
       const response = await fetch(`${apiUrl}/device/register`, {
         method: 'POST',
         headers: {
@@ -95,7 +97,6 @@ const DeviceSetup = () => {
         description: 'You can now send and receive encrypted emails'
       });
 
-      // Close dialog after 2 seconds
       setTimeout(() => setIsOpen(false), 2000);
 
     } catch (error) {
@@ -109,7 +110,6 @@ const DeviceSetup = () => {
   };
 
   useEffect(() => {
-    // Only run if user is logged in
     if (user) {
       setIsOpen(true);
       setupDevice();
@@ -190,8 +190,6 @@ const DeviceSetup = () => {
     </Dialog>
   );
 };
-
-// Helper functions
 
 const getTokenFromCookie = (): string | null => {
   const cookies = document.cookie.split(';');

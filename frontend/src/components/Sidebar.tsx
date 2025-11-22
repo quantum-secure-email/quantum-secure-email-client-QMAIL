@@ -1,6 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Home, Mail, Send, Users, Settings, Shield } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { Home, Mail, Send, Users, Settings, Shield, PenSquare } from 'lucide-react';
+import { cn } from '@/lib/utils'; 
 
 const Sidebar = () => {
   const location = useLocation();
@@ -8,7 +8,8 @@ const Sidebar = () => {
   const navItems = [
     { path: '/dashboard', icon: Home, label: 'Dashboard' },
     { path: '/inbox', icon: Mail, label: 'Inbox' },
-    { path: '/compose', icon: Send, label: 'Compose' },
+    { path: '/sent', icon: Send, label: 'Sent' },
+    { path: '/compose', icon: PenSquare, label: 'Compose' },
     { path: '/threads', icon: Users, label: 'Groups' },
     { path: '/settings', icon: Settings, label: 'Settings' },
   ];

@@ -185,7 +185,41 @@ async def check_recipient(
             user_id=recipient_user.id,
             device_count=0
         )
-
+        
+@router.post("/generate-keypair")
+async def generate_keypair(
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Generate Kyber512 keypair on backend
+    Returns both keys to frontend, but backend doesn't store them
+    Frontend will store private key locally and send back public key to register
+    """
+    try:
+        import oqs
+        import base64
+        
+        with oqs.KeyEncapsulation("Kyber512") as kem:
+            public_key = kem.generate_keypair()
+            try:
+                private_key = kem.export_secret_key()
+            except Exception:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Failed to export private key"
+                )
+        
+        return {
+            "public_key_b64": base64.b64encode(public_key).decode(),
+            "private_key_b64": base64.b64encode(private_key).decode(),
+            "algo": "Kyber512"
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Keypair generation failed: {str(e)}"
+        )
 
 @router.get("/my-devices")
 async def get_my_devices(

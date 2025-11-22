@@ -10,3 +10,37 @@ npm run dev
 
 psql -U qmail_user -d qmail_db -h localhost -c "SELECT id, email, name, created_at FROM users;"
 password = qmail_password_2024
+
+All users:
+psql -U qmail_user -d qmail_db -h localhost -c "
+SELECT 
+  u.id as user_id,
+  u.email,
+  u.name,
+  d.device_id,
+  d.algo,
+  LEFT(d.pubkey_b64, 50) || '...' as pubkey_preview,
+  d.created_at as device_registered
+FROM users u
+LEFT JOIN devices d ON u.id = d.user_id
+ORDER BY u.id, d.created_at DESC;
+"
+
+
+Specific user:
+psql -U qmail_user -d qmail_db -h localhost -c "
+SELECT email, device_id, pubkey_b64 
+FROM users u 
+JOIN devices d ON u.id = d.user_id 
+WHERE u.email = 'achalacharya07@gmail.com';
+"
+
+
+
+
+delete entire table:
+psql -U qmail_user -d qmail_db -h localhost -c "
+DELETE FROM devices;
+DELETE FROM oauth_tokens;
+DELETE FROM users;
+"

@@ -13,6 +13,7 @@ import SettingsPage from "./pages/SettingsPage";
 import NotFound from "./pages/NotFound";
 import Inbox from "./pages/Inbox";
 import AuthComplete from './pages/AuthComplete';
+import Sent from './pages/Sent';
 
 const queryClient = new QueryClient();
 
@@ -22,14 +23,14 @@ const App = () => (
       <TooltipProvider>
         <Toaster />
         <Sonner />
-        {/* DeviceSetup runs automatically after OAuth login */}
         <DeviceSetup />
         <BrowserRouter>
           <Routes>
             <Route path="/" element={<Login />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/inbox" element={<Inbox />} />
-            <Route path="/compose" element={<ComposeUpdated />} />  {/* UPDATED */}
+            <Route path="/sent" element={<Sent />} />
+            <Route path="/compose" element={<ComposeUpdated />} />  
             <Route path="/threads" element={<GroupThreads />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/auth/complete" element={<AuthComplete />} />

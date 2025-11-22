@@ -4,11 +4,20 @@ from pydantic import BaseModel
 from typing import Optional
 import base64
 import json
+import os
+import uuid
+import secrets
 
 from database import get_db
-from models import User, OAuthToken
+from models import User, OAuthToken, Device, KMStore
 from dependencies import get_current_user, get_valid_oauth_token
 from gmail_service import GmailService
+
+# Import encryption libraries
+import oqs
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 router = APIRouter(prefix="/api/compose", tags=["compose"])
 
@@ -44,7 +53,6 @@ async def compose_and_send(
         
         # Level 1: Standard Gmail
         if level == 1:
-            # Send plain email via Gmail
             result = gmail.send_message(
                 to=email_data.to,
                 subject=email_data.subject,
@@ -59,38 +67,77 @@ async def compose_and_send(
                 "message": "Email sent with standard Gmail encryption"
             }
         
-        # Level 2: Post-Quantum Encryption
+        # Level 2: Post-Quantum Encryption (ACTUAL ENCRYPTION)
         elif level == 2:
             if not email_data.recipient_device_id:
                 raise HTTPException(
                     status_code=400,
-                    detail="recipient_device_id required for Level 2 encryption. Recipient must register a device first."
+                    detail="recipient_device_id required for Level 2 encryption"
                 )
             
-            # For now, create a placeholder encrypted body
-            # In full implementation, this would use the /encrypt endpoint
-            encrypted_body = f"""
-=== QMail Level 2 Encrypted Message ===
+            print(f"🔐 Level 2 encryption for {email_data.to}")
+            
+            # Get recipient's device and public key
+            device = db.query(Device).filter(
+                Device.device_id == email_data.recipient_device_id
+            ).first()
+            
+            if not device:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Recipient device not found"
+                )
+            
+            print(f"  ✓ Found device: {device.device_id}")
+            
+            # Perform Kyber512 KEM encapsulation
+            with oqs.KeyEncapsulation("Kyber512") as kem:
+                # Load recipient's public key
+                recipient_pubkey = base64.b64decode(device.pubkey_b64)
+                
+                # Generate ephemeral key and encapsulate
+                kem_ciphertext, shared_secret = kem.encap_secret(recipient_pubkey)
+            
+            print(f"  ✓ KEM encapsulation successful")
+            
+            # Derive AES-256 key from shared secret using HKDF
+            aes_key = HKDF(
+                algorithm=hashes.SHA256(),
+                length=32,
+                salt=None,
+                info=b"qmail-aes"
+            ).derive(shared_secret)
+            
+            # Encrypt message with AES-256-GCM
+            nonce = os.urandom(12)
+            aesgcm = AESGCM(aes_key)
+            message_bytes = email_data.message.encode('utf-8')
+            aes_ciphertext = aesgcm.encrypt(nonce, message_bytes, None)
+            
+            print(f"  ✓ AES-GCM encryption successful")
+            
+            # Encode everything to base64
+            kem_ct_b64 = base64.b64encode(kem_ciphertext).decode()
+            ciphertext_b64 = base64.b64encode(aes_ciphertext).decode()
+            nonce_b64 = base64.b64encode(nonce).decode()
+            
+            # Create properly formatted email body
+            encrypted_body = f"""═══════════════════════════════════════
+🔐 ENCRYPTED WITH QMAIL
+This message can only be read in QMail.
+Sign in at: https://qmail-frontend.onrender.com
+═══════════════════════════════════════
 
-🔒 This message is encrypted with Post-Quantum Cryptography (Kyber512 + AES-GCM)
+kem_ct_b64: {kem_ct_b64}
+ciphertext_b64: {ciphertext_b64}
+nonce_b64: {nonce_b64}
 
-To decrypt this message:
-1. Go to https://qmail.example.com
-2. Sign in with your account
-3. Your device will automatically decrypt this message
-
-Encrypted Payload:
-kem_ct_b64: [Base64 encoded Kyber ciphertext]
-ciphertext_b64: [Base64 encoded AES-GCM ciphertext]
-nonce_b64: [Base64 encoded nonce]
-
-Original message length: {len(email_data.message)} characters
-Encryption: Kyber512 KEM + AES-256-GCM
+Encryption: Kyber512 + AES-256-GCM
 Recipient Device: {email_data.recipient_device_id}
 
 ---
 Sent from QMail - Quantum-Secure Email
-            """
+"""
             
             # Send encrypted email
             result = gmail.send_message(
@@ -98,6 +145,8 @@ Sent from QMail - Quantum-Secure Email
                 subject=f"🔒 [Encrypted] {email_data.subject}",
                 body=encrypted_body
             )
+            
+            print(f"  ✓ Email sent: {result['id']}")
             
             return {
                 "success": True,
@@ -112,36 +161,114 @@ Sent from QMail - Quantum-Secure Email
             if not email_data.recipient_device_id:
                 raise HTTPException(
                     status_code=400,
-                    detail="recipient_device_id required for Level 3 encryption. Recipient must register a device first."
+                    detail="recipient_device_id required for Level 3 encryption"
                 )
             
-            # For now, create a placeholder encrypted body
-            encrypted_body = f"""
-=== QMail Level 3 Maximum Security Message ===
+            print(f"🔐 Level 3 (OTP) encryption for {email_data.to}")
+            
+            # Get recipient's device and public key
+            device = db.query(Device).filter(
+                Device.device_id == email_data.recipient_device_id
+            ).first()
+            
+            if not device:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Recipient device not found"
+                )
+            
+            print(f"  ✓ Found device: {device.device_id}")
+            
+            # Generate OTP (same length as message)
+            message_bytes = email_data.message.encode('utf-8')
+            otp = secrets.token_bytes(len(message_bytes))
+            
+            print(f"  ✓ Generated OTP: {len(otp)} bytes")
+            
+            # XOR encrypt message with OTP
+            xor_ciphertext = bytes([m ^ o for m, o in zip(message_bytes, otp)])
+            
+            print(f"  ✓ XOR encryption complete")
+            
+            # Wrap OTP for recipient using their public key
+            recipient_pubkey = base64.b64decode(device.pubkey_b64)
+            
+            with oqs.KeyEncapsulation("Kyber512") as kem:
+                kem_ciphertext, shared_secret = kem.encap_secret(recipient_pubkey)
+            
+            # Derive AES key from shared secret
+            aes_key = HKDF(
+                algorithm=hashes.SHA256(),
+                length=32,
+                salt=None,
+                info=b"qmail-otp-wrap"
+            ).derive(shared_secret)
+            
+            # Encrypt OTP with AES-GCM
+            nonce = os.urandom(12)
+            aesgcm = AESGCM(aes_key)
+            otp_aes_ct = aesgcm.encrypt(nonce, otp, b"otp-wrap")
+            
+            print(f"  ✓ OTP wrapped for recipient")
+            
+            # Create wrapped OTP payload
+            otp_wrapped = {
+                "kem_ct_b64": base64.b64encode(kem_ciphertext).decode(),
+                "aes_ct_b64": base64.b64encode(otp_aes_ct).decode(),
+                "nonce_b64": base64.b64encode(nonce).decode()
+            }
+            
+            # Generate unique OTP key ID
+            otp_key_id = str(uuid.uuid4())
+            
+            # Store OTP metadata in database
+            km_entry = KMStore(
+                key_id=otp_key_id,
+                key_b64=base64.b64encode(otp).decode(),  # Store actual OTP
+                used=False,
+                origin="otp-level3",
+                meta={
+                    "sender_id": current_user.id,
+                    "recipient_id": device.user_id,
+                    "message_length": len(message_bytes),
+                    "encryption_type": "OTP-XOR",
+                    "wrapped_otps": [
+                        {
+                            "device_id": device.device_id,
+                            "otp_wrapped_b64": base64.b64encode(
+                                json.dumps(otp_wrapped).encode()
+                            ).decode()
+                        }
+                    ]
+                }
+            )
+            
+            db.add(km_entry)
+            db.commit()
+            
+            print(f"  ✓ OTP stored in database: {otp_key_id}")
+            
+            # Create email body
+            xor_ciphertext_b64 = base64.b64encode(xor_ciphertext).decode()
+            
+            encrypted_body = f"""═══════════════════════════════════════
+🔐 ENCRYPTED WITH QMAIL - MAXIMUM SECURITY
+This message uses One-Time Pad encryption.
+Can only be read in QMail.
+═══════════════════════════════════════
 
-🔐 This message is encrypted with One-Time Pad + Simulated Quantum Key Distribution
+otp_key_id: {otp_key_id}
+xor_ciphertext_b64: {xor_ciphertext_b64}
 
-To decrypt this message:
-1. Go to https://qmail.example.com
-2. Sign in with your account
-3. Your device will automatically decrypt this message using the OTP key
-
-Encrypted Payload:
-otp_key_id: [OTP Key Identifier]
-otp_sender_wrapped_b64: [Wrapped OTP for sender]
-otp_recipient_wrapped_b64: [Wrapped OTP for recipient]
-xor_ciphertext_b64: [Message XOR'd with OTP]
-
-Original message length: {len(email_data.message)} characters
 Encryption: One-Time Pad (Information-Theoretic Security)
-Key Distribution: Simulated QKD
+Key Distribution: Simulated Quantum Key Distribution
 Recipient Device: {email_data.recipient_device_id}
 
 ⚠️ This OTP key can only be used ONCE and will be discarded after decryption.
 
 ---
 Sent from QMail - Maximum Quantum Security
-            """
+"""
             
             # Send encrypted email
             result = gmail.send_message(
@@ -150,10 +277,13 @@ Sent from QMail - Maximum Quantum Security
                 body=encrypted_body
             )
             
+            print(f"  ✓ Email sent: {result['id']}")
+            
             return {
                 "success": True,
                 "level": 3,
                 "message_id": result['id'],
+                "otp_key_id": otp_key_id,
                 "encryption_type": "otp_qkd",
                 "message": "Email sent with Maximum Security (OTP + QKD)"
             }
@@ -184,16 +314,9 @@ async def check_recipient_device(
 ):
     """
     Check if recipient has registered a device for encrypted communication
-    
-    Returns:
-        - has_device: boolean
-        - device_id: string (if has_device is true)
-        - email: recipient email
     """
     try:
         # Query for user by email
-        from models import User, Device
-        
         recipient = db.query(User).filter(User.email == email).first()
         
         if not recipient:
@@ -203,8 +326,10 @@ async def check_recipient_device(
                 "message": "Recipient not registered in QMail system"
             }
         
-        # Check if user has any registered devices
-        device = db.query(Device).filter(Device.user_id == recipient.id).first()
+        # Check if user has any registered devices (get most recent)
+        device = db.query(Device).filter(
+            Device.user_id == recipient.id
+        ).order_by(Device.created_at.desc()).first()
         
         if device:
             return {

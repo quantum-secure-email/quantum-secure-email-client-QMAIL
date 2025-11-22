@@ -1,188 +1,285 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '@/components/DashboardLayout';
-import { Card } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Mail, Lock, Shield, Users, RefreshCw } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
+import { Mail, Shield, Lock, Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
+import { format } from 'date-fns';
+import { decryptEmail, detectEncryptionLevel } from '@/utils/decryptionUtils';
 
 interface Email {
   id: string;
-  subject: string;
   from: string;
-  to: string;
-  date: string;
+  subject: string;
   snippet: string;
-  encryption_type: string;
   body: string;
+  date: string;
+  encryption_level: 1 | 2 | 3 | null;
+  decrypted?: boolean;
+  decrypted_body?: string;
 }
 
-const Inbox = () => {
+const getTokenFromCookie = (): string | null => {
+  const cookies = document.cookie.split(';');
+  for (const cookie of cookies) {
+    const [name, value] = cookie.trim().split('=');
+    if (name === 'session_token') {
+      return value;
+    }
+  }
+  return null;
+};
+
+const InboxUpdated = () => {
   const [emails, setEmails] = useState<Email[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedEmail, setSelectedEmail] = useState<Email | null>(null);
-  const { toast } = useToast();
-  const navigate = useNavigate();
+  const [decrypting, setDecrypting] = useState(false);
+
   const apiUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-
-  const fetchEmails = async () => {
-    setLoading(true);
-    try {
-      const response = await fetch(`${apiUrl}/api/inbox`, {
-        credentials: 'include'
-      });
-
-      if (response.status === 401) {
-        navigate('/');
-        return;
-      }
-
-      if (!response.ok) throw new Error('Failed to fetch emails');
-
-      const data = await response.json();
-      setEmails(data.messages || []);
-    } catch (error) {
-      console.error('Error fetching emails:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to load inbox',
-        variant: 'destructive'
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
 
   useEffect(() => {
     fetchEmails();
   }, []);
 
-  const getEncryptionBadge = (type: string) => {
-    switch (type) {
-      case 'level2':
+  const fetchEmails = async () => {
+    try {
+      const token = getTokenFromCookie();
+      const response = await fetch(`${apiUrl}/api/inbox`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch emails');
+      }
+
+      const data = await response.json();
+      const emailsWithLevel = (data.emails || data.messages || []).map((email: any) => ({
+        ...email,
+        encryption_level: detectEncryptionLevel(email.body),
+        decrypted: false
+      }));
+      
+      setEmails(emailsWithLevel);
+    } catch (error) {
+      console.error('Failed to fetch emails:', error);
+      toast.error('Failed to load emails');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDecryptEmail = async (email: Email) => {
+    if (email.encryption_level === 1 || email.decrypted) {
+      // Already decrypted or not encrypted
+      return;
+    }
+
+    setDecrypting(true);
+
+    try {
+      const decryptedBody = await decryptEmail(email.body);
+      
+      // Update email with decrypted content
+      const updatedEmail = {
+        ...email,
+        decrypted: true,
+        decrypted_body: decryptedBody
+      };
+      
+      setSelectedEmail(updatedEmail);
+      
+      // Update emails list
+      setEmails(emails.map(e => 
+        e.id === email.id ? updatedEmail : e
+      ));
+      
+      toast.success('Email decrypted successfully!');
+      
+    } catch (error) {
+      console.error('Decryption failed:', error);
+      toast.error('Failed to decrypt email', {
+        description: 'Please check your device setup'
+      });
+    } finally {
+      setDecrypting(false);
+    }
+  };
+
+  const handleSelectEmail = (email: Email) => {
+    setSelectedEmail(email);
+    
+    // Auto-decrypt if encrypted and not yet decrypted
+    if (email.encryption_level && email.encryption_level > 1 && !email.decrypted) {
+      handleDecryptEmail(email);
+    }
+  };
+
+  const getEncryptionBadge = (level: 1 | 2 | 3 | null) => {
+    if (!level || level === 1) {
+      return (
+        <Badge variant="secondary" className="flex items-center gap-1">
+          <Mail className="h-3 w-3" />
+          Standard
+        </Badge>
+      );
+    }
+    
+    switch (level) {
+      case 2:
         return (
-          <Badge className="bg-blue-500">
-            <Lock className="w-3 h-3 mr-1" />
-            Level 2
+          <Badge className="flex items-center gap-1 bg-blue-600">
+            <Shield className="h-3 w-3" />
+            Level 2 Encrypted
           </Badge>
         );
-      case 'level3':
+      case 3:
         return (
-          <Badge className="bg-purple-500">
-            <Shield className="w-3 h-3 mr-1" />
-            Level 3
-          </Badge>
-        );
-      case 'group_level2':
-        return (
-          <Badge className="bg-green-500">
-            <Users className="w-3 h-3 mr-1" />
-            Group
-          </Badge>
-        );
-      default:
-        return (
-          <Badge variant="outline">
-            <Mail className="w-3 h-3 mr-1" />
-            Plain
+          <Badge className="flex items-center gap-1 bg-purple-600">
+            <Lock className="h-3 w-3" />
+            Level 3 Encrypted
           </Badge>
         );
     }
   };
 
+  const getEmailBody = (email: Email) => {
+    if (email.decrypted && email.decrypted_body) {
+      return email.decrypted_body;
+    }
+    
+    if (email.encryption_level && email.encryption_level > 1) {
+      return '🔐 This message is encrypted. Click to decrypt...';
+    }
+    
+    return email.body;
+  };
+
   return (
     <DashboardLayout>
-      <div className="space-y-4">
-        <div className="flex justify-between items-center">
-          <div>
-            <h1 className="text-3xl font-bold">Inbox</h1>
-            <p className="text-muted-foreground">Your encrypted emails</p>
-          </div>
-          <Button onClick={fetchEmails} disabled={loading}>
-            <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
-            Refresh
-          </Button>
+      <div className="mx-auto max-w-6xl space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold text-foreground">Inbox</h1>
+          <p className="text-muted-foreground">
+            Your encrypted and standard emails
+          </p>
         </div>
 
-        {loading ? (
-          <div className="flex justify-center items-center h-64">
-            <RefreshCw className="w-8 h-8 animate-spin text-primary" />
-          </div>
-        ) : (
-          <div className="grid gap-4">
-            {emails.length === 0 ? (
-              <Card className="p-8 text-center">
-                <Mail className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-                <h3 className="text-lg font-semibold mb-2">No emails</h3>
-                <p className="text-muted-foreground">
-                  Your inbox is empty. Send yourself a test email to get started!
-                </p>
-              </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Mail className="h-5 w-5" />
+              All Messages
+            </CardTitle>
+            <CardDescription>
+              {emails.length} messages
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {loading ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+              </div>
+            ) : emails.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">
+                <Mail className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                <p>No emails yet</p>
+              </div>
             ) : (
-              emails.map((email) => (
-                <Card
-                  key={email.id}
-                  className="p-4 hover:bg-accent cursor-pointer transition-colors"
-                  onClick={() => setSelectedEmail(email)}
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        {getEncryptionBadge(email.encryption_type)}
-                        <span className="font-semibold">{email.from}</span>
+              <div className="space-y-2">
+                {emails.map((email) => (
+                  <div
+                    key={email.id}
+                    onClick={() => handleSelectEmail(email)}
+                    className="flex items-center gap-4 p-4 rounded-lg border hover:bg-gray-50 cursor-pointer transition-colors"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-3 mb-1">
+                        <p className="text-sm font-medium text-foreground truncate">
+                          From: {email.from}
+                        </p>
+                        {getEncryptionBadge(email.encryption_level)}
+                        {email.decrypted && (
+                          <Badge variant="outline" className="text-green-600">
+                            Decrypted ✓
+                          </Badge>
+                        )}
                       </div>
-                      <h3 className="font-medium mb-1">{email.subject}</h3>
-                      <p className="text-sm text-muted-foreground line-clamp-2">
+                      <p className="text-sm font-medium text-foreground mb-1 truncate">
+                        {email.subject || '(no subject)'}
+                      </p>
+                      <p className="text-sm text-muted-foreground truncate">
                         {email.snippet}
                       </p>
                     </div>
-                    <div className="text-sm text-muted-foreground ml-4">
-                      {new Date(email.date).toLocaleDateString()}
+                    <div className="text-sm text-muted-foreground whitespace-nowrap">
+                      {format(new Date(email.date), 'MMM d, yyyy')}
                     </div>
                   </div>
-                </Card>
-              ))
+                ))}
+              </div>
             )}
-          </div>
-        )}
+          </CardContent>
+        </Card>
 
         {/* Email Detail Modal */}
         {selectedEmail && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-            <Card className="max-w-2xl w-full max-h-[80vh] overflow-y-auto">
-              <div className="p-6">
-                <div className="flex justify-between items-start mb-4">
-                  <div className="flex-1">
-                    {getEncryptionBadge(selectedEmail.encryption_type)}
-                    <h2 className="text-2xl font-bold mt-2">{selectedEmail.subject}</h2>
-                    <p className="text-muted-foreground mt-1">
-                      From: {selectedEmail.from}
-                    </p>
-                    <p className="text-muted-foreground">
-                      Date: {new Date(selectedEmail.date).toLocaleString()}
-                    </p>
+          <div
+            className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"
+            onClick={() => setSelectedEmail(null)}
+          >
+            <Card
+              className="max-w-2xl w-full max-h-[80vh] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle>{selectedEmail.subject || '(no subject)'}</CardTitle>
+                  <div className="flex items-center gap-2">
+                    {getEncryptionBadge(selectedEmail.encryption_level)}
+                    {selectedEmail.decrypted && (
+                      <Badge variant="outline" className="text-green-600">
+                        Decrypted ✓
+                      </Badge>
+                    )}
                   </div>
-                  <Button variant="ghost" onClick={() => setSelectedEmail(null)}>
-                    Close
-                  </Button>
                 </div>
-
-                <div className="prose max-w-none">
-                  <pre className="whitespace-pre-wrap bg-muted p-4 rounded-lg">
-                    {selectedEmail.body}
-                  </pre>
-                </div>
-
-                {selectedEmail.encryption_type !== 'plain' && (
-                  <div className="mt-4 p-4 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg">
-                    <p className="text-sm">
-                      <strong>Note:</strong> This is an encrypted message. Client-side
-                      decryption will be implemented in the next phase.
+                <CardDescription>
+                  From: {selectedEmail.from} • {format(new Date(selectedEmail.date), 'PPpp')}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {selectedEmail.encryption_level && selectedEmail.encryption_level > 1 && !selectedEmail.decrypted ? (
+                  <div className="text-center py-8">
+                    <Lock className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
+                    <p className="text-lg font-medium mb-2">Encrypted Message</p>
+                    <p className="text-sm text-muted-foreground mb-4">
+                      This message is protected with {selectedEmail.encryption_level === 2 ? 'Level 2 (Kyber512)' : 'Level 3 (OTP)'} encryption
                     </p>
+                    <Button 
+                      onClick={() => handleDecryptEmail(selectedEmail)}
+                      disabled={decrypting}
+                    >
+                      {decrypting ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Decrypting...
+                        </>
+                      ) : (
+                        'Decrypt Message'
+                      )}
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="prose prose-sm max-w-none">
+                    <p className="whitespace-pre-wrap">{getEmailBody(selectedEmail)}</p>
                   </div>
                 )}
-              </div>
+              </CardContent>
             </Card>
           </div>
         )}
@@ -191,4 +288,4 @@ const Inbox = () => {
   );
 };
 
-export default Inbox;
+export default InboxUpdated;
