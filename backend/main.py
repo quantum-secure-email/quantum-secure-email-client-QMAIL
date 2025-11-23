@@ -232,32 +232,32 @@ def health():
     return {"ok": True, **pqc_available_probe()}
 
 # ---------- Device endpoints ----------
-@app.post("/device/register")
-def register_device(req: DeviceRegister):
-    devices = get_devices()
-    # enforce single pubkey -> one device id
-    for did, info in devices.items():
-        if info.get("pubkey_b64") == req.pubkey_b64:
-            return {"device_id": did, "status": "already_registered", "note": "pubkey already registered"}
-    did = req.device_id or str(uuid.uuid4())
-    devices[did] = {"pubkey_b64": req.pubkey_b64, "algo": req.algo or (kem.kem_name if kem else "unknown"), "meta": req.meta}
-    save_devices(devices)
-    return {"device_id": did, "status": "registered"}
+# @app.post("/device/register")
+# def register_device(req: DeviceRegister):
+#     devices = get_devices()
+#     # enforce single pubkey -> one device id
+#     for did, info in devices.items():
+#         if info.get("pubkey_b64") == req.pubkey_b64:
+#             return {"device_id": did, "status": "already_registered", "note": "pubkey already registered"}
+#     did = req.device_id or str(uuid.uuid4())
+#     devices[did] = {"pubkey_b64": req.pubkey_b64, "algo": req.algo or (kem.kem_name if kem else "unknown"), "meta": req.meta}
+#     save_devices(devices)
+#     return {"device_id": did, "status": "registered"}
 
-@app.get("/device/{device_id}")
-def get_device(device_id: str):
-    devices = get_devices()
-    d = devices.get(device_id)
-    if not d:
-        raise HTTPException(status_code=404, detail="device not found")
-    return {"device_id": device_id, **d}
+# @app.get("/device/{device_id}")
+# def get_device(device_id: str):
+#     devices = get_devices()
+#     d = devices.get(device_id)
+#     if not d:
+#         raise HTTPException(status_code=404, detail="device not found")
+#     return {"device_id": device_id, **d}
 
-@app.get("/device/pubkey/{device_id}")
-def device_pubkey(device_id: str):
-    d = get_devices().get(device_id)
-    if not d:
-        raise HTTPException(status_code=404, detail="device not found")
-    return {"device_id": device_id, "pubkey_b64": d["pubkey_b64"], "algo": d.get("algo")}
+# @app.get("/device/pubkey/{device_id}")
+# def device_pubkey(device_id: str):
+#     d = get_devices().get(device_id)
+#     if not d:
+#         raise HTTPException(status_code=404, detail="device not found")
+#     return {"device_id": device_id, "pubkey_b64": d["pubkey_b64"], "algo": d.get("algo")}
 
 # ---------- Encrypt endpoints ----------
 @app.post("/encrypt")
