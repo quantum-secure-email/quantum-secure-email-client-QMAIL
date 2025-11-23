@@ -10,7 +10,7 @@ const Sidebar = () => {
     { path: '/inbox', icon: Mail, label: 'Inbox' },
     { path: '/sent', icon: Send, label: 'Sent' },
     { path: '/compose', icon: PenSquare, label: 'Compose' },
-    { path: '/threads', icon: Users, label: 'Groups' },
+    { path: '/groups', icon: Users, label: 'Groups' },
     { path: '/settings', icon: Settings, label: 'Settings' },
   ];
 

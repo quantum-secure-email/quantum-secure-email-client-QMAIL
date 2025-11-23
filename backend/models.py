@@ -61,6 +61,7 @@ class Group(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    aes_key_b64 = Column(Text, nullable=True)  
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     

@@ -8,7 +8,7 @@ import DeviceSetup from "./components/DeviceSetup";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import ComposeUpdated from "./pages/Compose"; 
-import GroupThreads from "./pages/GroupThreads";
+import GroupsManager from '@/components/GroupsManager';
 import SettingsPage from "./pages/SettingsPage";
 import NotFound from "./pages/NotFound";
 import Inbox from "./pages/Inbox";
@@ -31,7 +31,7 @@ const App = () => (
             <Route path="/inbox" element={<Inbox />} />
             <Route path="/sent" element={<Sent />} />
             <Route path="/compose" element={<ComposeUpdated />} />  
-            <Route path="/threads" element={<GroupThreads />} />
+            <Route path="/groups" element={<GroupsManager />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/auth/complete" element={<AuthComplete />} />
             <Route path="*" element={<NotFound />} />
