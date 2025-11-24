@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Users, Plus, UserPlus, Trash2, LogOut, Mail, Shield } from 'lucide-react';
 import { toast } from 'sonner';
+import { decryptGroupKey } from '@/utils/decryptionUtils';
 
 interface Group {
   id: number;
@@ -208,6 +209,28 @@ const GroupThreads = () => {
   useEffect(() => {
     fetchGroups();
   }, []);
+
+  // Auto-sync: Pre-cache group keys when groups are loaded
+  useEffect(() => {
+    const preCacheGroupKeys = async () => {
+      if (groups.length === 0) return;
+
+      console.log('🔑 Pre-caching group keys...');
+      
+      for (const group of groups) {
+        try {
+          await decryptGroupKey(group.id);
+          console.log(`✅ Cached key for: ${group.name}`);
+        } catch (error) {
+          console.warn(`⚠️ Couldn't cache key for ${group.name}:`, error);
+        }
+      }
+      
+      console.log('✅ Group key pre-caching complete');
+    };
+
+    preCacheGroupKeys();
+  }, [groups]);
 
   return (
     <DashboardLayout>

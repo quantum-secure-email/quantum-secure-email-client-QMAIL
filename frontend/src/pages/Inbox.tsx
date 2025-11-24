@@ -3,7 +3,7 @@ import DashboardLayout from '@/components/DashboardLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Mail, Shield, Lock, Loader2 } from 'lucide-react';
+import { Mail, Shield, Lock, Loader2, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { decryptEmail, detectEncryptionLevel } from '@/utils/decryptionUtils';
@@ -15,7 +15,7 @@ interface Email {
   snippet: string;
   body: string;
   date: string;
-  encryption_level: 1 | 2 | 3 | null;
+  encryption_level: 1 | 2 | 3 | 'group' | null;
   decrypted?: boolean;
   decrypted_body?: string;
 }
@@ -82,6 +82,9 @@ const InboxUpdated = () => {
     setDecrypting(true);
 
     try {
+      console.log('🔓 Attempting to decrypt email...');
+      console.log('Encryption level:', email.encryption_level);
+      
       const decryptedBody = await decryptEmail(email.body);
       
       // Update email with decrypted content
@@ -103,7 +106,7 @@ const InboxUpdated = () => {
     } catch (error) {
       console.error('Decryption failed:', error);
       toast.error('Failed to decrypt email', {
-        description: 'Please check your device setup'
+        description: error instanceof Error ? error.message : 'Please check your device setup'
       });
     } finally {
       setDecrypting(false);
@@ -114,17 +117,26 @@ const InboxUpdated = () => {
     setSelectedEmail(email);
     
     // Auto-decrypt if encrypted and not yet decrypted
-    if (email.encryption_level && email.encryption_level > 1 && !email.decrypted) {
+    if (email.encryption_level && email.encryption_level !== 1 && !email.decrypted) {
       handleDecryptEmail(email);
     }
   };
 
-  const getEncryptionBadge = (level: 1 | 2 | 3 | null) => {
+  const getEncryptionBadge = (level: 1 | 2 | 3 | 'group' | null) => {
     if (!level || level === 1) {
       return (
         <Badge variant="secondary" className="flex items-center gap-1">
           <Mail className="h-3 w-3" />
           Standard
+        </Badge>
+      );
+    }
+    
+    if (level === 'group') {
+      return (
+        <Badge className="flex items-center gap-1 bg-blue-600">
+          <Users className="h-3 w-3" />
+          Level 2 (Group)
         </Badge>
       );
     }
@@ -152,11 +164,24 @@ const InboxUpdated = () => {
       return email.decrypted_body;
     }
     
-    if (email.encryption_level && email.encryption_level > 1) {
+    if (email.encryption_level && email.encryption_level !== 1) {
       return '🔐 This message is encrypted. Click to decrypt...';
     }
     
     return email.body;
+  };
+
+  const getEncryptionDescription = (level: 1 | 2 | 3 | 'group' | null) => {
+    if (level === 'group') {
+      return 'Level 2 (Kyber512 + AES-256-GCM) - Group Message';
+    }
+    if (level === 2) {
+      return 'Level 2 (Kyber512 + AES-256-GCM)';
+    }
+    if (level === 3) {
+      return 'Level 3 (OTP + QKD)';
+    }
+    return null;
   };
 
   return (
@@ -253,12 +278,12 @@ const InboxUpdated = () => {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                {selectedEmail.encryption_level && selectedEmail.encryption_level > 1 && !selectedEmail.decrypted ? (
+                {selectedEmail.encryption_level && selectedEmail.encryption_level !== 1 && !selectedEmail.decrypted ? (
                   <div className="text-center py-8">
                     <Lock className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
                     <p className="text-lg font-medium mb-2">Encrypted Message</p>
                     <p className="text-sm text-muted-foreground mb-4">
-                      This message is protected with {selectedEmail.encryption_level === 2 ? 'Level 2 (Kyber512)' : 'Level 3 (OTP)'} encryption
+                      {getEncryptionDescription(selectedEmail.encryption_level)}
                     </p>
                     <Button 
                       onClick={() => handleDecryptEmail(selectedEmail)}

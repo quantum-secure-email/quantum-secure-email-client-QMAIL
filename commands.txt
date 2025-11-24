@@ -51,3 +51,15 @@ show all tables:
 psql -U qmail_user -d qmail_db -h localhost -c "\dt"
 
 
+Connect and truncate all tables
+psql -U qmail_user -d qmail_db -h localhost << EOF
+TRUNCATE TABLE 
+  group_keys,
+  group_members,
+  groups,
+  km_store,
+  oauth_tokens,
+  devices,
+  users
+CASCADE;
+EOF

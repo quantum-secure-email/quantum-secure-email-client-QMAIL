@@ -205,97 +205,95 @@ const ComposeEmail = () => {
     try {
       const token = getTokenFromCookie();
 
-      // Get or decrypt group AES key
-      let groupAesKeyB64: string;
-      const cachedKey = await getGroupKey(selectedGroupId);
+      // CRITICAL: Always fetch fresh group key when SENDING (never use cache)
+      // This ensures we use the latest key after any key rotations
+      console.log('🔑 Fetching FRESH group key for sending...');
       
-      if (cachedKey) {
-        groupAesKeyB64 = cachedKey.decrypted_aes_key_b64;
-      } else {
-        // Fetch encrypted group key
-        const keyResponse = await fetch(`${apiUrl}/api/groups/${selectedGroupId}/key`, {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
-          credentials: 'include',
-        });
+      // Fetch encrypted group key
+      const keyResponse = await fetch(`${apiUrl}/api/groups/${selectedGroupId}/key`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+        credentials: 'include',
+      });
 
-        if (!keyResponse.ok) {
-          throw new Error('Failed to fetch group key');
-        }
-
-        const { encrypted_group_key } = await keyResponse.json();
-        const encryptedKeyData = JSON.parse(encrypted_group_key);
-        const { kem_ct_b64, wrapped_key_b64, nonce_b64 } = encryptedKeyData;
-
-        // Get private key from IndexedDB
-        const keyData = await getMostRecentPrivateKey();
-        if (!keyData) {
-          throw new Error('No private key found. Please set up your device.');
-        }
-
-        // Decapsulate KEM
-        const decapResponse = await fetch(`${apiUrl}/api/decrypt/level2`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-          },
-          credentials: 'include',
-          body: JSON.stringify({
-            kem_ct_b64: kem_ct_b64,
-            private_key_b64: keyData.private_key_b64
-          }),
-        });
-
-        if (!decapResponse.ok) {
-          throw new Error('Failed to decapsulate group key');
-        }
-
-        const { shared_secret_b64 } = await decapResponse.json();
-        const sharedSecret = base64ToUint8Array(shared_secret_b64);
-
-        // Derive wrapping key
-        const keyMaterial = await window.crypto.subtle.importKey(
-          'raw',
-          sharedSecret,
-          { name: 'HKDF' },
-          false,
-          ['deriveKey']
-        );
-
-        const wrapKey = await window.crypto.subtle.deriveKey(
-          {
-            name: 'HKDF',
-            hash: 'SHA-256',
-            salt: new Uint8Array(32),
-            info: new TextEncoder().encode('qmail-group-key')
-          },
-          keyMaterial,
-          { name: 'AES-GCM', length: 256 },
-          false,
-          ['decrypt']
-        );
-
-        // Unwrap group AES key
-        const wrappedKey = base64ToUint8Array(wrapped_key_b64);
-        const nonce = base64ToUint8Array(nonce_b64);
-
-        const groupAesKeyRaw = await window.crypto.subtle.decrypt(
-          { name: 'AES-GCM', iv: nonce, additionalData: new TextEncoder().encode('group-key-wrap') },
-          wrapKey,
-          wrappedKey
-        );
-
-        groupAesKeyB64 = btoa(String.fromCharCode(...new Uint8Array(groupAesKeyRaw)));
-
-        // Cache the key
-        await storeGroupKey({
-          group_id: selectedGroupId,
-          decrypted_aes_key_b64: groupAesKeyB64,
-          cached_at: new Date().toISOString()
-        });
+      if (!keyResponse.ok) {
+        throw new Error('Failed to fetch group key');
       }
+
+      const { encrypted_group_key } = await keyResponse.json();
+      const encryptedKeyData = JSON.parse(encrypted_group_key);
+      const { kem_ct_b64, wrapped_key_b64, nonce_b64 } = encryptedKeyData;
+
+      // Get private key from IndexedDB
+      const keyData = await getMostRecentPrivateKey();
+      if (!keyData) {
+        throw new Error('No private key found. Please set up your device.');
+      }
+
+      // Decapsulate KEM
+      const decapResponse = await fetch(`${apiUrl}/api/decrypt/level2`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          kem_ct_b64: kem_ct_b64,
+          private_key_b64: keyData.private_key_b64
+        }),
+      });
+
+      if (!decapResponse.ok) {
+        throw new Error('Failed to decapsulate group key');
+      }
+
+      const { shared_secret_b64 } = await decapResponse.json();
+      const sharedSecret = base64ToUint8Array(shared_secret_b64);
+
+      // Derive wrapping key
+      const keyMaterial = await window.crypto.subtle.importKey(
+        'raw',
+        sharedSecret,
+        { name: 'HKDF' },
+        false,
+        ['deriveKey']
+      );
+
+      const wrapKey = await window.crypto.subtle.deriveKey(
+        {
+          name: 'HKDF',
+          hash: 'SHA-256',
+          salt: new Uint8Array(32),
+          info: new TextEncoder().encode('qmail-group-key')
+        },
+        keyMaterial,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['decrypt']
+      );
+
+      // Unwrap group AES key
+      const wrappedKey = base64ToUint8Array(wrapped_key_b64);
+      const nonce = base64ToUint8Array(nonce_b64);
+
+      const groupAesKeyRaw = await window.crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: nonce, additionalData: new TextEncoder().encode('group-key-wrap') },
+        wrapKey,
+        wrappedKey
+      );
+
+      const groupAesKeyB64 = btoa(String.fromCharCode(...new Uint8Array(groupAesKeyRaw)));
+
+      console.log('✅ Fresh group key decrypted for sending');
+
+      // Now update the cache with the fresh key (in case it changed)
+      await storeGroupKey({
+        group_id: selectedGroupId,
+        decrypted_aes_key_b64: groupAesKeyB64,
+        cached_at: new Date().toISOString()
+      });
 
       // Encrypt message with group AES key
       const groupAesKey = base64ToUint8Array(groupAesKeyB64);

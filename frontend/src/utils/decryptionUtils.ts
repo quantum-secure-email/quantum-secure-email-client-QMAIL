@@ -366,7 +366,7 @@ export const decryptGroupMessage = async (emailBody: string): Promise<string> =>
  */
 export const detectEncryptionLevel = (emailBody: string): 1 | 2 | 3 | 'group' | null => {
   // Check for group encryption first
-  if (emailBody.includes('Group ID:') && emailBody.includes('ENCRYPTED GROUP MESSAGE')) {
+  if (emailBody.includes('Group ID:') && (emailBody.includes('GROUP MESSAGE') || emailBody.includes('Group:') || emailBody.includes('Group Level 2'))) {
     return 'group';
   }
   if (emailBody.includes('kem_ct_b64:') && emailBody.includes('ciphertext_b64:')) {

@@ -615,6 +615,7 @@ async def send_group_message(
         formatted_subject = f"[Group: {group.name}] {message_data.subject}"
         
         # Create email body with encryption markers
+        # NOTE: message_data.message already contains the encrypted format from frontend
         email_body = f"""╔═══════════════════════════════════════╗
 🔐 ENCRYPTED GROUP MESSAGE - QMAIL
 This message can only be read in QMail.
@@ -622,7 +623,6 @@ Sign in at: https://qmail-frontend.onrender.com
 ╚═══════════════════════════════════════╝
 
 Group: {group.name}
-Group ID: {group_id}
 
 {message_data.message}
 
