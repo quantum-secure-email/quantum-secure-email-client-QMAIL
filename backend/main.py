@@ -9,7 +9,7 @@ import base64
 import requests
 import email
 import email.policy
-from routers import auth, inbox, compose, devices, decrypt, sent
+from routers import auth, inbox, compose, devices, decrypt, sent, groups
 from pathlib import Path
 from typing import Optional, Dict, Any
 from fastapi import FastAPI, HTTPException, Body
@@ -190,6 +190,7 @@ app.include_router(compose.router)
 app.include_router(devices.router) 
 app.include_router(decrypt.router)
 app.include_router(sent.router)
+app.include_router(groups.router)
 
 # CORS: allow your frontend origins (add your production origin later)
 FRONTEND_ORIGINS = os.environ.get("FRONTEND_ORIGINS", "http://localhost:8080,http://localhost:3000").split(",")

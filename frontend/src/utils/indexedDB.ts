@@ -6,7 +6,8 @@
 
 const DB_NAME = 'qmail_keystore';
 const STORE_NAME = 'private_keys';
-const DB_VERSION = 1;
+const GROUP_KEYS_STORE = 'group_keys';
+const DB_VERSION = 2;
 
 interface PrivateKeyData {
   device_id: string;
@@ -14,6 +15,12 @@ interface PrivateKeyData {
   public_key_b64: string;
   created_at: string;
   algo: string;
+}
+
+interface GroupKeyData {
+  group_id: number;
+  decrypted_aes_key_b64: string;
+  cached_at: string;
 }
 
 /**
@@ -29,9 +36,14 @@ const initDB = (): Promise<IDBDatabase> => {
     request.onupgradeneeded = (event) => {
       const db = (event.target as IDBOpenDBRequest).result;
       
-      // Create object store if it doesn't exist
+      // Create object store for private keys if it doesn't exist
       if (!db.objectStoreNames.contains(STORE_NAME)) {
         db.createObjectStore(STORE_NAME, { keyPath: 'device_id' });
+      }
+      
+      // Create object store for group keys if it doesn't exist
+      if (!db.objectStoreNames.contains(GROUP_KEYS_STORE)) {
+        db.createObjectStore(GROUP_KEYS_STORE, { keyPath: 'group_id' });
       }
     };
   });
@@ -127,4 +139,78 @@ export const getMostRecentPrivateKey = async (): Promise<PrivateKeyData | null> 
   // Sort by created_at descending
   keys.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   return keys[0];
+};
+
+// ========== Group Key Functions ==========
+
+/**
+ * Store decrypted group AES key in IndexedDB for fast future access
+ */
+export const storeGroupKey = async (data: GroupKeyData): Promise<void> => {
+  const db = await initDB();
+  
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([GROUP_KEYS_STORE], 'readwrite');
+    const store = transaction.objectStore(GROUP_KEYS_STORE);
+    const request = store.put(data);
+
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+    
+    transaction.oncomplete = () => db.close();
+  });
+};
+
+/**
+ * Get cached group key from IndexedDB
+ */
+export const getGroupKey = async (group_id: number): Promise<GroupKeyData | null> => {
+  const db = await initDB();
+  
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([GROUP_KEYS_STORE], 'readonly');
+    const store = transaction.objectStore(GROUP_KEYS_STORE);
+    const request = store.get(group_id);
+
+    request.onsuccess = () => resolve(request.result || null);
+    request.onerror = () => reject(request.error);
+    
+    transaction.oncomplete = () => db.close();
+  });
+};
+
+/**
+ * Delete group key from cache
+ */
+export const deleteGroupKey = async (group_id: number): Promise<void> => {
+  const db = await initDB();
+  
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([GROUP_KEYS_STORE], 'readwrite');
+    const store = transaction.objectStore(GROUP_KEYS_STORE);
+    const request = store.delete(group_id);
+
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+    
+    transaction.oncomplete = () => db.close();
+  });
+};
+
+/**
+ * Get all cached group keys
+ */
+export const getAllGroupKeys = async (): Promise<GroupKeyData[]> => {
+  const db = await initDB();
+  
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([GROUP_KEYS_STORE], 'readonly');
+    const store = transaction.objectStore(GROUP_KEYS_STORE);
+    const request = store.getAll();
+
+    request.onsuccess = () => resolve(request.result || []);
+    request.onerror = () => reject(request.error);
+    
+    transaction.oncomplete = () => db.close();
+  });
 };

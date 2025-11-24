@@ -44,3 +44,10 @@ DELETE FROM devices;
 DELETE FROM oauth_tokens;
 DELETE FROM users;
 "
+
+
+
+show all tables:
+psql -U qmail_user -d qmail_db -h localhost -c "\dt"
+
+

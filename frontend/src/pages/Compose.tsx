@@ -14,8 +14,12 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Shield, Send, Info, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Shield, Send, Info, AlertCircle, CheckCircle2, Users, Mail } from 'lucide-react';
 import { toast } from 'sonner';
+import { getMostRecentPrivateKey, getGroupKey, storeGroupKey } from '@/utils/indexedDB';
+import { base64ToUint8Array } from '@/utils/decryptionUtils';
 
 // Helper to get token from cookie
 const getTokenFromCookie = (): string | null => {
@@ -54,7 +58,18 @@ interface RecipientInfo {
   device_count: number;
 }
 
+interface Group {
+  id: number;
+  name: string;
+  created_by: number;
+  member_count: number;
+  is_creator: boolean;
+}
+
 const ComposeEmail = () => {
+  const [composeMode, setComposeMode] = useState<'email' | 'group'>('email');
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [selectedGroupId, setSelectedGroupId] = useState<number | null>(null);
   const [recipient, setRecipient] = useState('');
   const [subject, setSubject] = useState('');
   const [message, setMessage] = useState('');
@@ -111,6 +126,41 @@ const ComposeEmail = () => {
     checkRecipient();
   }, [debouncedRecipient, apiUrl]);
 
+  // Fetch groups on component mount
+  useEffect(() => {
+    const fetchGroups = async () => {
+      try {
+        const token = getTokenFromCookie();
+        const response = await fetch(`${apiUrl}/api/groups/list`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+          credentials: 'include',
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          setGroups(data.groups || []);
+        }
+      } catch (error) {
+        console.error('Failed to fetch groups:', error);
+      }
+    };
+
+    fetchGroups();
+
+    // Check for group parameter in URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const groupParam = urlParams.get('group');
+    if (groupParam) {
+      const groupId = parseInt(groupParam);
+      if (!isNaN(groupId)) {
+        setComposeMode('group');
+        setSelectedGroupId(groupId);
+      }
+    }
+  }, [apiUrl]);
+
   const encryptionLevels = [
     {
       value: 1,
@@ -143,7 +193,181 @@ const ComposeEmail = () => {
     return !recipientInfo?.has_device;
   };
 
+  // Handle sending group messages
+  const handleSendGroup = async () => {
+    if (!selectedGroupId || !subject || !message) {
+      toast.error('Please fill in all fields and select a group');
+      return;
+    }
+
+    setSending(true);
+
+    try {
+      const token = getTokenFromCookie();
+
+      // Get or decrypt group AES key
+      let groupAesKeyB64: string;
+      const cachedKey = await getGroupKey(selectedGroupId);
+      
+      if (cachedKey) {
+        groupAesKeyB64 = cachedKey.decrypted_aes_key_b64;
+      } else {
+        // Fetch encrypted group key
+        const keyResponse = await fetch(`${apiUrl}/api/groups/${selectedGroupId}/key`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+          credentials: 'include',
+        });
+
+        if (!keyResponse.ok) {
+          throw new Error('Failed to fetch group key');
+        }
+
+        const { encrypted_group_key } = await keyResponse.json();
+        const encryptedKeyData = JSON.parse(encrypted_group_key);
+        const { kem_ct_b64, wrapped_key_b64, nonce_b64 } = encryptedKeyData;
+
+        // Get private key from IndexedDB
+        const keyData = await getMostRecentPrivateKey();
+        if (!keyData) {
+          throw new Error('No private key found. Please set up your device.');
+        }
+
+        // Decapsulate KEM
+        const decapResponse = await fetch(`${apiUrl}/api/decrypt/level2`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          credentials: 'include',
+          body: JSON.stringify({
+            kem_ct_b64: kem_ct_b64,
+            private_key_b64: keyData.private_key_b64
+          }),
+        });
+
+        if (!decapResponse.ok) {
+          throw new Error('Failed to decapsulate group key');
+        }
+
+        const { shared_secret_b64 } = await decapResponse.json();
+        const sharedSecret = base64ToUint8Array(shared_secret_b64);
+
+        // Derive wrapping key
+        const keyMaterial = await window.crypto.subtle.importKey(
+          'raw',
+          sharedSecret,
+          { name: 'HKDF' },
+          false,
+          ['deriveKey']
+        );
+
+        const wrapKey = await window.crypto.subtle.deriveKey(
+          {
+            name: 'HKDF',
+            hash: 'SHA-256',
+            salt: new Uint8Array(32),
+            info: new TextEncoder().encode('qmail-group-key')
+          },
+          keyMaterial,
+          { name: 'AES-GCM', length: 256 },
+          false,
+          ['decrypt']
+        );
+
+        // Unwrap group AES key
+        const wrappedKey = base64ToUint8Array(wrapped_key_b64);
+        const nonce = base64ToUint8Array(nonce_b64);
+
+        const groupAesKeyRaw = await window.crypto.subtle.decrypt(
+          { name: 'AES-GCM', iv: nonce, additionalData: new TextEncoder().encode('group-key-wrap') },
+          wrapKey,
+          wrappedKey
+        );
+
+        groupAesKeyB64 = btoa(String.fromCharCode(...new Uint8Array(groupAesKeyRaw)));
+
+        // Cache the key
+        await storeGroupKey({
+          group_id: selectedGroupId,
+          decrypted_aes_key_b64: groupAesKeyB64,
+          cached_at: new Date().toISOString()
+        });
+      }
+
+      // Encrypt message with group AES key
+      const groupAesKey = base64ToUint8Array(groupAesKeyB64);
+      const aesKey = await window.crypto.subtle.importKey(
+        'raw',
+        groupAesKey,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['encrypt']
+      );
+
+      const messageBytes = new TextEncoder().encode(message);
+      const nonceBytes = window.crypto.getRandomValues(new Uint8Array(12));
+
+      const ciphertext = await window.crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv: nonceBytes },
+        aesKey,
+        messageBytes
+      );
+
+      const ciphertextB64 = btoa(String.fromCharCode(...new Uint8Array(ciphertext)));
+      const nonceB64 = btoa(String.fromCharCode(...new Uint8Array(nonceBytes)));
+
+      // Format encrypted message body
+      const encryptedMessage = `Group ID: ${selectedGroupId}
+ciphertext_b64: ${ciphertextB64}
+nonce_b64: ${nonceB64}`;
+
+      // Send encrypted group message
+      const response = await fetch(`${apiUrl}/api/groups/${selectedGroupId}/send`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          subject: subject,
+          message: encryptedMessage,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to send group message');
+      }
+
+      const data = await response.json();
+
+      toast.success('Group message sent successfully!', {
+        description: `Sent to ${data.recipient_count} members with Level 2 encryption`,
+      });
+
+      // Reset form
+      setSubject('');
+      setMessage('');
+
+    } catch (error) {
+      console.error('Group send failed:', error);
+      toast.error('Failed to send group message', {
+        description: error instanceof Error ? error.message : 'Please try again',
+      });
+    } finally {
+      setSending(false);
+    }
+  };
+
   const handleSend = async () => {
+    if (composeMode === 'group') {
+      return await handleSendGroup();
+    }
+
+    // Email mode validation
     if (!recipient || !subject || !message) {
       toast.error('Please fill in all fields');
       return;
@@ -219,14 +443,14 @@ const ComposeEmail = () => {
       return (
         <div className="flex items-center gap-2 text-sm text-green-600">
           <CheckCircle2 className="h-4 w-4" />
-          <span>✓ Recipient has QMail device (Level 2/3 available)</span>
+          <span>âœ“ Recipient has QMail device (Level 2/3 available)</span>
         </div>
       );
     } else {
       return (
         <div className="flex items-center gap-2 text-sm text-yellow-600">
           <AlertCircle className="h-4 w-4" />
-          <span>⚠ Recipient has no encryption device (Level 1 only)</span>
+          <span>âš  Recipient has no encryption device (Level 1 only)</span>
         </div>
       );
     }
@@ -253,18 +477,71 @@ const ComposeEmail = () => {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
-            {/* Recipient Field */}
+            {/* Mode Selector */}
             <div className="space-y-2">
-              <Label htmlFor="recipient">Recipient Email</Label>
-              <Input
-                id="recipient"
-                type="email"
-                placeholder="recipient@example.com"
-                value={recipient}
-                onChange={(e) => setRecipient(e.target.value)}
-              />
-              {getRecipientStatus()}
+              <Label>Compose Mode</Label>
+              <Tabs value={composeMode} onValueChange={(v) => setComposeMode(v as 'email' | 'group')}>
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="email" className="flex items-center gap-2">
+                    <Mail className="h-4 w-4" />
+                    Email
+                  </TabsTrigger>
+                  <TabsTrigger value="group" className="flex items-center gap-2">
+                    <Users className="h-4 w-4" />
+                    Group
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
             </div>
+
+            {/* Group Selector (only in group mode) */}
+            {composeMode === 'group' && (
+              <div className="space-y-2">
+                <Label htmlFor="group-select">Select Group</Label>
+                <Select
+                  value={selectedGroupId?.toString() || ''}
+                  onValueChange={(value) => setSelectedGroupId(parseInt(value))}
+                >
+                  <SelectTrigger id="group-select">
+                    <SelectValue placeholder="Choose a group" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {groups.length === 0 ? (
+                      <div className="p-2 text-sm text-muted-foreground">
+                        No groups available. Create one first!
+                      </div>
+                    ) : (
+                      groups.map((group) => (
+                        <SelectItem key={group.id} value={group.id.toString()}>
+                          {group.name} ({group.member_count} members)
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+                {selectedGroupId && (
+                  <p className="text-sm text-muted-foreground flex items-center gap-2">
+                    <Shield className="h-4 w-4 text-accent" />
+                    Messages encrypted with Level 2 (Kyber512 + AES-256-GCM)
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Recipient Field (only in email mode) */}
+            {composeMode === 'email' && (
+              <div className="space-y-2">
+                <Label htmlFor="recipient">Recipient Email</Label>
+                <Input
+                  id="recipient"
+                  type="email"
+                  placeholder="recipient@example.com"
+                  value={recipient}
+                  onChange={(e) => setRecipient(e.target.value)}
+                />
+                {getRecipientStatus()}
+              </div>
+            )}
 
             {/* Subject Field */}
             <div className="space-y-2">
@@ -290,55 +567,57 @@ const ComposeEmail = () => {
               />
             </div>
 
-            {/* Encryption Level Selector */}
-            <div className="space-y-3">
-              <Label>Encryption Level</Label>
-              <div className="grid gap-3">
-                {encryptionLevels.map((level) => {
-                  const Icon = level.icon;
-                  const disabled = isLevelDisabled(level.value);
-                  const isSelected = encryptionLevel === level.value;
+            {/* Encryption Level Selector (only in email mode) */}
+            {composeMode === 'email' && (
+              <div className="space-y-3">
+                <Label>Encryption Level</Label>
+                <div className="grid gap-3">
+                  {encryptionLevels.map((level) => {
+                    const Icon = level.icon;
+                    const disabled = isLevelDisabled(level.value);
+                    const isSelected = encryptionLevel === level.value;
 
-                  return (
-                    <button
-                      key={level.value}
-                      onClick={() => !disabled && setEncryptionLevel(level.value as 1 | 2 | 3)}
-                      disabled={disabled}
-                      className={`relative flex items-start gap-3 rounded-lg border-2 p-4 text-left transition-all ${
-                        isSelected
-                          ? 'border-primary bg-primary/5'
-                          : disabled
-                          ? 'border-gray-200 bg-gray-50 cursor-not-allowed opacity-50'
-                          : 'border-gray-200 hover:border-primary/50 hover:bg-gray-50'
-                      }`}
-                    >
-                      <Icon className={`h-5 w-5 mt-0.5 ${isSelected ? 'text-primary' : 'text-muted-foreground'}`} />
-                      <div className="flex-1 space-y-1">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium">{level.label}</span>
-                          {disabled && level.requiresDevice && (
-                            <Badge variant="secondary" className="text-xs">
-                              Requires Device
-                            </Badge>
-                          )}
+                    return (
+                      <button
+                        key={level.value}
+                        onClick={() => !disabled && setEncryptionLevel(level.value as 1 | 2 | 3)}
+                        disabled={disabled}
+                        className={`relative flex items-start gap-3 rounded-lg border-2 p-4 text-left transition-all ${
+                          isSelected
+                            ? 'border-primary bg-primary/5'
+                            : disabled
+                            ? 'border-gray-200 bg-gray-50 cursor-not-allowed opacity-50'
+                            : 'border-gray-200 hover:border-primary/50 hover:bg-gray-50'
+                        }`}
+                      >
+                        <Icon className={`h-5 w-5 mt-0.5 ${isSelected ? 'text-primary' : 'text-muted-foreground'}`} />
+                        <div className="flex-1 space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium">{level.label}</span>
+                            {disabled && level.requiresDevice && (
+                              <Badge variant="secondary" className="text-xs">
+                                Requires Device
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="text-sm text-muted-foreground">{level.description}</p>
                         </div>
-                        <p className="text-sm text-muted-foreground">{level.description}</p>
-                      </div>
-                      {isSelected && (
-                        <div className="absolute right-4 top-4">
-                          <CheckCircle2 className="h-5 w-5 text-primary" />
-                        </div>
-                      )}
-                    </button>
-                  );
-                })}
+                        {isSelected && (
+                          <div className="absolute right-4 top-4">
+                            <CheckCircle2 className="h-5 w-5 text-primary" />
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Send Button */}
             <Button
               onClick={handleSend}
-              disabled={sending || checkingRecipient}
+              disabled={sending || checkingRecipient || (composeMode === 'group' && !selectedGroupId)}
               className="w-full"
               size="lg"
             >
@@ -350,7 +629,7 @@ const ComposeEmail = () => {
               ) : (
                 <>
                   <Send className="mr-2 h-4 w-4" />
-                  Send Email
+                  {composeMode === 'group' ? 'Send to Group' : 'Send Email'}
                 </>
               )}
             </Button>
