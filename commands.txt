@@ -63,3 +63,7 @@ TRUNCATE TABLE
   users
 CASCADE;
 EOF
+
+
+
+compose.py emojies

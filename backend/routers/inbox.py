@@ -218,3 +218,26 @@ async def toggle_read_status(
     except Exception as e:
         print(f"Error toggling read status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/attachment/{message_id}/{attachment_id}")
+async def get_attachment(
+    message_id: str,
+    attachment_id: str,
+    current_user: User = Depends(get_current_user),
+    oauth_token: OAuthToken = Depends(get_valid_oauth_token)
+):
+    """Download attachment from email"""
+    try:
+        gmail = GmailService(
+            access_token=oauth_token.access_token,
+            refresh_token=oauth_token.refresh_token
+        )
+        
+        attachment_data = gmail.get_attachment(message_id, attachment_id)
+        
+        return {
+            "success": True,
+            "attachment_data": attachment_data  # Base64 encoded
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

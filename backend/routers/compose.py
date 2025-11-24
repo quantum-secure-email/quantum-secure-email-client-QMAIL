@@ -27,6 +27,12 @@ class ComposeEmailRequest(BaseModel):
     message: str
     encryption_level: int  # 1, 2, or 3
     recipient_device_id: Optional[str] = None  # Required for level 2 and 3
+    # Attachment fields (Level 1 & 2 only)
+    attachment_data: Optional[str] = None  # Base64 encoded file (plain for L1, encrypted for L2)
+    attachment_filename: Optional[str] = None
+    attachment_mimetype: Optional[str] = None
+    attachment_size: Optional[int] = None
+    attachment_nonce: Optional[str] = None  # Only for Level 2 encrypted attachments
 
 @router.post("/send")
 async def compose_and_send(
@@ -53,18 +59,31 @@ async def compose_and_send(
         
         # Level 1: Standard Gmail
         if level == 1:
-            result = gmail.send_message(
-                to=email_data.to,
-                subject=email_data.subject,
-                body=email_data.message
-            )
+            # Check if attachment is present
+            if email_data.attachment_data and email_data.attachment_filename:
+                print(f"📎 Sending Level 1 email with attachment: {email_data.attachment_filename}")
+                result = gmail.send_message_with_attachment(
+                    to=email_data.to,
+                    subject=email_data.subject,
+                    body=email_data.message,
+                    attachment_data=email_data.attachment_data,
+                    attachment_filename=email_data.attachment_filename,
+                    attachment_mimetype=email_data.attachment_mimetype or 'application/octet-stream'
+                )
+            else:
+                result = gmail.send_message(
+                    to=email_data.to,
+                    subject=email_data.subject,
+                    body=email_data.message
+                )
             
             return {
                 "success": True,
                 "level": 1,
                 "message_id": result['id'],
                 "encryption_type": "standard_gmail",
-                "message": "Email sent with standard Gmail encryption"
+                "message": "Email sent with standard Gmail encryption",
+                "has_attachment": bool(email_data.attachment_data)
             }
         
         # Level 2: Post-Quantum Encryption (ACTUAL ENCRYPTION)
@@ -88,7 +107,7 @@ async def compose_and_send(
                     detail="Recipient device not found"
                 )
             
-            print(f"  ✓ Found device: {device.device_id}")
+            print(f"  ✅ Found device: {device.device_id}")
             
             # Perform Kyber512 KEM encapsulation
             with oqs.KeyEncapsulation("Kyber512") as kem:
@@ -98,7 +117,7 @@ async def compose_and_send(
                 # Generate ephemeral key and encapsulate
                 kem_ciphertext, shared_secret = kem.encap_secret(recipient_pubkey)
             
-            print(f"  ✓ KEM encapsulation successful")
+            print(f"  ✅ KEM encapsulation successful")
             
             # Derive AES-256 key from shared secret using HKDF
             aes_key = HKDF(
@@ -114,7 +133,7 @@ async def compose_and_send(
             message_bytes = email_data.message.encode('utf-8')
             aes_ciphertext = aesgcm.encrypt(nonce, message_bytes, None)
             
-            print(f"  ✓ AES-GCM encryption successful")
+            print(f"  ✅ AES-GCM encryption successful")
             
             # Encode everything to base64
             kem_ct_b64 = base64.b64encode(kem_ciphertext).decode()
@@ -122,11 +141,12 @@ async def compose_and_send(
             nonce_b64 = base64.b64encode(nonce).decode()
             
             # Create properly formatted email body
-            encrypted_body = f"""═══════════════════════════════════════
+            header_line = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            encrypted_body = f"""{header_line}
 🔐 ENCRYPTED WITH QMAIL
 This message can only be read in QMail.
 Sign in at: https://qmail-frontend.onrender.com
-═══════════════════════════════════════
+{header_line}
 
 kem_ct_b64: {kem_ct_b64}
 ciphertext_b64: {ciphertext_b64}
@@ -146,14 +166,15 @@ Sent from QMail - Quantum-Secure Email
                 body=encrypted_body
             )
             
-            print(f"  ✓ Email sent: {result['id']}")
+            print(f"  ✅ Email sent: {result['id']}")
             
             return {
                 "success": True,
                 "level": 2,
                 "message_id": result['id'],
                 "encryption_type": "post_quantum_kyber512",
-                "message": "Email sent with Post-Quantum encryption (Kyber512)"
+                "message": "Email sent with Post-Quantum encryption (Kyber512)",
+                "has_attachment": bool(email_data.attachment_data)
             }
         
         # Level 3: OTP + QKD
@@ -177,18 +198,18 @@ Sent from QMail - Quantum-Secure Email
                     detail="Recipient device not found"
                 )
             
-            print(f"  ✓ Found device: {device.device_id}")
+            print(f"  ✅ Found device: {device.device_id}")
             
             # Generate OTP (same length as message)
             message_bytes = email_data.message.encode('utf-8')
             otp = secrets.token_bytes(len(message_bytes))
             
-            print(f"  ✓ Generated OTP: {len(otp)} bytes")
+            print(f"  ✅ Generated OTP: {len(otp)} bytes")
             
             # XOR encrypt message with OTP
             xor_ciphertext = bytes([m ^ o for m, o in zip(message_bytes, otp)])
             
-            print(f"  ✓ XOR encryption complete")
+            print(f"  ✅ XOR encryption complete")
             
             # Wrap OTP for recipient using their public key
             recipient_pubkey = base64.b64decode(device.pubkey_b64)
@@ -209,7 +230,7 @@ Sent from QMail - Quantum-Secure Email
             aesgcm = AESGCM(aes_key)
             otp_aes_ct = aesgcm.encrypt(nonce, otp, b"otp-wrap")
             
-            print(f"  ✓ OTP wrapped for recipient")
+            print(f"  ✅ OTP wrapped for recipient")
             
             # Create wrapped OTP payload
             otp_wrapped = {
@@ -246,16 +267,16 @@ Sent from QMail - Quantum-Secure Email
             db.add(km_entry)
             db.commit()
             
-            print(f"  ✓ OTP stored in database: {otp_key_id}")
+            print(f"  ✅ OTP stored in database: {otp_key_id}")
             
             # Create email body
             xor_ciphertext_b64 = base64.b64encode(xor_ciphertext).decode()
-            
-            encrypted_body = f"""═══════════════════════════════════════
-🔐 ENCRYPTED WITH QMAIL - MAXIMUM SECURITY
+            header_line = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            encrypted_body = f"""{header_line}
+🛡️ ENCRYPTED WITH QMAIL - MAXIMUM SECURITY
 This message uses One-Time Pad encryption.
 Can only be read in QMail.
-═══════════════════════════════════════
+{header_line}
 
 otp_key_id: {otp_key_id}
 xor_ciphertext_b64: {xor_ciphertext_b64}
@@ -273,11 +294,11 @@ Sent from QMail - Maximum Quantum Security
             # Send encrypted email
             result = gmail.send_message(
                 to=email_data.to,
-                subject=f"🔐 [Maximum Security] {email_data.subject}",
+                subject=f"🛡️ [Maximum Security] {email_data.subject}",
                 body=encrypted_body
             )
             
-            print(f"  ✓ Email sent: {result['id']}")
+            print(f"  ✅ Email sent: {result['id']}")
             
             return {
                 "success": True,
@@ -297,7 +318,7 @@ Sent from QMail - Maximum Quantum Security
     except HTTPException:
         raise
     except Exception as e:
-        print(f"✗ Error in compose/send: {e}")
+        print(f"✖ Error in compose/send: {e}")
         import traceback
         traceback.print_exc()
         raise HTTPException(

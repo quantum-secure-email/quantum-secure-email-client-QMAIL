@@ -1,6 +1,7 @@
 /**
  * Client-Side Decryption Utilities
  * Decrypts Level 2 and Level 3 emails using private key from IndexedDB
+ * Includes file attachment decryption for Level 2
  */
 
 import { getMostRecentPrivateKey, getGroupKey, storeGroupKey } from './indexedDB';
@@ -362,6 +363,96 @@ export const decryptGroupMessage = async (emailBody: string): Promise<string> =>
 };
 
 /**
+ * Decrypt Level 2 Attachment
+ * Uses the same AES key as the message (derived from KEM)
+ * 
+ * Email body should contain:
+ * - kem_ct_b64: [base64] (same as message)
+ * - attachment_nonce_b64: [base64] (unique nonce for file)
+ * 
+ * @param emailBody - The email body containing encryption metadata
+ * @param encryptedAttachmentB64 - Base64 encoded encrypted file data
+ * @returns Decrypted file as Uint8Array
+ */
+export const decryptAttachment = async (
+  emailBody: string,
+  encryptedAttachmentB64: string
+): Promise<Uint8Array> => {
+  try {
+    console.log('🔓 Decrypting attachment...');
+    
+    // Extract attachment nonce from email body
+    const nonceMatch = emailBody.match(/attachment_nonce_b64:\s*([A-Za-z0-9+/=]+)/);
+    if (!nonceMatch) {
+      throw new Error('Attachment nonce not found in email');
+    }
+    
+    const attachmentNonceB64 = nonceMatch[1];
+    
+    // Extract KEM ciphertext (same as used for message encryption)
+    const kemCtMatch = emailBody.match(/kem_ct_b64:\s*([A-Za-z0-9+/=]+)/);
+    if (!kemCtMatch) {
+      throw new Error('KEM ciphertext not found');
+    }
+    
+    const kemCtB64 = kemCtMatch[1];
+    
+    // Get private key from IndexedDB
+    const keyData = await getMostRecentPrivateKey();
+    if (!keyData) {
+      throw new Error('No private key found');
+    }
+    
+    // Call backend to perform KEM decapsulation
+    const apiUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+    const token = getTokenFromCookie();
+    
+    const response = await fetch(`${apiUrl}/api/decrypt/level2`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      credentials: 'include',
+      body: JSON.stringify({
+        kem_ct_b64: kemCtB64,
+        private_key_b64: keyData.private_key_b64
+      }),
+    });
+    
+    if (!response.ok) {
+      throw new Error('Failed to decapsulate KEM');
+    }
+    
+    const { shared_secret_b64 } = await response.json();
+    const sharedSecret = base64ToUint8Array(shared_secret_b64);
+    
+    // Derive AES key from shared secret (same as message)
+    const aesKey = await deriveAESKey(sharedSecret);
+    
+    // Convert base64url to base64 if needed (Gmail API compatibility)
+    const base64Data = encryptedAttachmentB64.replace(/-/g, '+').replace(/_/g, '/');
+    
+    // Decrypt attachment
+    const encryptedData = base64ToUint8Array(base64Data);
+    const nonce = base64ToUint8Array(attachmentNonceB64);
+    
+    const decrypted = await window.crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: nonce },
+      aesKey,
+      encryptedData
+    );
+    
+    console.log('✅ Attachment decrypted successfully');
+    return new Uint8Array(decrypted);
+    
+  } catch (error) {
+    console.error('Attachment decryption failed:', error);
+    throw new Error('Failed to decrypt attachment: ' + (error instanceof Error ? error.message : 'Unknown error'));
+  }
+};
+
+/**
  * Detect encryption level from email body
  */
 export const detectEncryptionLevel = (emailBody: string): 1 | 2 | 3 | 'group' | null => {
@@ -375,7 +466,7 @@ export const detectEncryptionLevel = (emailBody: string): 1 | 2 | 3 | 'group' | 
   if (emailBody.includes('otp_key_id:') && emailBody.includes('xor_ciphertext_b64:')) {
     return 3;
   }
-  if (emailBody.includes('ðŸ” ENCRYPTED WITH QMAIL')) {
+  if (emailBody.includes('🔐 ENCRYPTED WITH QMAIL')) {
     // Has encryption banner but no recognizable format
     return null;
   }

@@ -3,10 +3,10 @@ import DashboardLayout from '@/components/DashboardLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Mail, Shield, Lock, Loader2, Users } from 'lucide-react';
+import { Mail, Shield, Lock, Loader2, Users, Paperclip, Download } from 'lucide-react';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
-import { decryptEmail, detectEncryptionLevel } from '@/utils/decryptionUtils';
+import { decryptEmail, detectEncryptionLevel, decryptAttachment } from '@/utils/decryptionUtils';
 
 interface Email {
   id: string;
@@ -18,6 +18,13 @@ interface Email {
   encryption_level: 1 | 2 | 3 | 'group' | null;
   decrypted?: boolean;
   decrypted_body?: string;
+  has_attachment?: boolean;
+  attachments?: Array<{
+    filename: string;
+    mimetype: string;
+    size: number;
+    attachment_id: string;
+  }>;
 }
 
 const getTokenFromCookie = (): string | null => {
@@ -58,11 +65,23 @@ const InboxUpdated = () => {
       }
 
       const data = await response.json();
-      const emailsWithLevel = (data.emails || data.messages || []).map((email: any) => ({
-        ...email,
-        encryption_level: detectEncryptionLevel(email.body),
-        decrypted: false
-      }));
+      const emailsWithLevel = (data.emails || data.messages || []).map((email: any) => {
+        // Debug: Log attachment info
+        if (email.has_attachment) {
+          console.log('📎 Email with attachment detected:', {
+            id: email.id,
+            subject: email.subject,
+            has_attachment: email.has_attachment,
+            attachments: email.attachments
+          });
+        }
+        
+        return {
+          ...email,
+          encryption_level: detectEncryptionLevel(email.body),
+          decrypted: false
+        };
+      });
       
       setEmails(emailsWithLevel);
     } catch (error) {
@@ -114,12 +133,89 @@ const InboxUpdated = () => {
   };
 
   const handleSelectEmail = (email: Email) => {
+    console.log('📧 Selected email:', {
+      id: email.id,
+      subject: email.subject,
+      has_attachment: email.has_attachment,
+      attachments: email.attachments,
+      encryption_level: email.encryption_level
+    });
+    
     setSelectedEmail(email);
     
     // Auto-decrypt if encrypted and not yet decrypted
     if (email.encryption_level && email.encryption_level !== 1 && !email.decrypted) {
       handleDecryptEmail(email);
     }
+  };
+
+  const handleDownloadAttachment = async (email: Email) => {
+    if (!email.attachments || email.attachments.length === 0) return;
+    
+    const attachment = email.attachments[0];
+    const token = getTokenFromCookie();
+    
+    try {
+      console.log(`📎 Downloading attachment: ${attachment.filename}`);
+      
+      // Download attachment
+      const response = await fetch(
+        `${apiUrl}/api/inbox/attachment/${email.id}/${attachment.attachment_id}`,
+        {
+          headers: { 'Authorization': `Bearer ${token}` },
+          credentials: 'include',
+        }
+      );
+      
+      if (!response.ok) throw new Error('Failed to download attachment');
+      
+      const data = await response.json();
+      const attachmentData = data.attachment_data;
+      
+      // Check if encrypted (filename ends with .enc)
+      if (attachment.filename.endsWith('.enc') && (email.encryption_level === 2 || email.encryption_level === 'group')) {
+        console.log('🔐 Decrypting attachment...');
+        
+        // Decrypt attachment
+        const decryptedData = await decryptAttachment(email.body, attachmentData);
+        
+        // Extract original filename (remove .enc)
+        const originalFilename = attachment.filename.replace(/\.enc$/, '');
+        
+        // Download decrypted file
+        downloadFile(decryptedData, originalFilename);
+        toast.success('Attachment decrypted and downloaded!');
+      } else {
+        console.log('📥 Downloading plain attachment...');
+        
+        // Download plain file (Level 1)
+        // Convert base64url to base64 (Gmail API returns URL-safe base64)
+        const base64 = attachmentData.replace(/-/g, '+').replace(/_/g, '/');
+        const binaryData = atob(base64);
+        const bytes = new Uint8Array(binaryData.length);
+        for (let i = 0; i < binaryData.length; i++) {
+          bytes[i] = binaryData.charCodeAt(i);
+        }
+        
+        downloadFile(bytes, attachment.filename);
+        toast.success('Attachment downloaded!');
+      }
+    } catch (error) {
+      console.error('Download failed:', error);
+      toast.error('Failed to download attachment', {
+        description: error instanceof Error ? error.message : 'Please try again'
+      });
+    }
+  };
+  
+  const downloadFile = (data: Uint8Array, filename: string) => {
+    const blob = new Blob([data]);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   const getEncryptionBadge = (level: 1 | 2 | 3 | 'group' | null) => {
@@ -228,6 +324,12 @@ const InboxUpdated = () => {
                           From: {email.from}
                         </p>
                         {getEncryptionBadge(email.encryption_level)}
+                        {email.has_attachment && (
+                          <Badge variant="outline" className="flex items-center gap-1">
+                            <Paperclip className="h-3 w-3" />
+                            Attachment
+                          </Badge>
+                        )}
                         {email.decrypted && (
                           <Badge variant="outline" className="text-green-600">
                             Decrypted ✓
@@ -300,9 +402,26 @@ const InboxUpdated = () => {
                     </Button>
                   </div>
                 ) : (
-                  <div className="prose prose-sm max-w-none">
-                    <p className="whitespace-pre-wrap">{getEmailBody(selectedEmail)}</p>
-                  </div>
+                  <>
+                    <div className="prose prose-sm max-w-none">
+                      <p className="whitespace-pre-wrap">{getEmailBody(selectedEmail)}</p>
+                    </div>
+                    
+                    {/* Attachment Download Button */}
+                    {selectedEmail.has_attachment && selectedEmail.attachments && selectedEmail.attachments.length > 0 && (
+                      <div className="mt-4 pt-4 border-t">
+                        <Button
+                          onClick={() => handleDownloadAttachment(selectedEmail)}
+                          variant="outline"
+                          className="w-full"
+                        >
+                          <Download className="mr-2 h-4 w-4" />
+                          Download {selectedEmail.attachments[0].filename}
+                          {selectedEmail.attachments[0].filename.endsWith('.enc') && ' (Encrypted)'}
+                        </Button>
+                      </div>
+                    )}
+                  </>
                 )}
               </CardContent>
             </Card>

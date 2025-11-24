@@ -2,6 +2,9 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
 import base64
 from typing import List, Dict, Optional
 from datetime import datetime
@@ -81,10 +84,10 @@ class GmailService:
                 body={'removeLabelIds': ['UNREAD']}
             ).execute()
             
-            print(f"✓ Marked message {message_id} as read")
+            print(f"âœ“ Marked message {message_id} as read")
             return {"success": True, "message_id": message_id, "status": "read"}
         except Exception as e:
-            print(f"✗ Error marking message as read: {e}")
+            print(f"âœ— Error marking message as read: {e}")
             raise
     
     def mark_as_unread(self, message_id: str) -> Dict:
@@ -96,10 +99,10 @@ class GmailService:
                 body={'addLabelIds': ['UNREAD']}
             ).execute()
             
-            print(f"✓ Marked message {message_id} as unread")
+            print(f"âœ“ Marked message {message_id} as unread")
             return {"success": True, "message_id": message_id, "status": "unread"}
         except Exception as e:
-            print(f"✗ Error marking message as unread: {e}")
+            print(f"âœ— Error marking message as unread: {e}")
             raise
     
     def _parse_message(self, message: Dict) -> Dict:
@@ -123,6 +126,9 @@ class GmailService:
         label_ids = message.get('labelIds', [])
         is_unread = 'UNREAD' in label_ids
         
+        # Extract attachments
+        attachments = self._get_attachments(payload)
+        
         return {
             "id": message['id'],
             "threadId": message.get('threadId'),
@@ -134,7 +140,9 @@ class GmailService:
             "body": body,
             "encryption_type": encryption_type,
             "labelIds": label_ids,
-            "isUnread": is_unread
+            "isUnread": is_unread,
+            "attachments": attachments,
+            "has_attachment": len(attachments) > 0
         }
     
     def _get_header(self, headers: List[Dict], name: str) -> str:
@@ -163,6 +171,32 @@ class GmailService:
         
         return ''
     
+    
+    def _get_attachments(self, payload: Dict) -> List[Dict]:
+        """Extract attachment metadata from message payload"""
+        attachments = []
+        
+        def extract_parts(parts):
+            for part in parts:
+                if part.get('filename'):
+                    attachment_id = part.get('body', {}).get('attachmentId')
+                    if attachment_id:
+                        attachments.append({
+                            'filename': part['filename'],
+                            'mimetype': part.get('mimeType', 'application/octet-stream'),
+                            'size': part.get('body', {}).get('size', 0),
+                            'attachment_id': attachment_id
+                        })
+                
+                # Recursive for nested parts
+                if 'parts' in part:
+                    extract_parts(part['parts'])
+        
+        if 'parts' in payload:
+            extract_parts(payload['parts'])
+        
+        return attachments
+    
     def _detect_encryption(self, body: str) -> str:
         """Detect encryption type from email body"""
         if 'group_id' in body and ('ciphertext_b64' in body or 'nonce_b64' in body):
@@ -188,8 +222,67 @@ class GmailService:
                 body={'raw': raw_message}
             ).execute()
             
-            print(f"✓ Email sent successfully: {send_message['id']}")
+            print(f"âœ“ Email sent successfully: {send_message['id']}")
             return send_message
         except Exception as e:
-            print(f"✗ Error sending message: {e}")
+            print(f"âœ— Error sending message: {e}")
+            raise
+    
+    def send_message_with_attachment(
+        self, 
+        to: str, 
+        subject: str, 
+        body: str, 
+        attachment_data: str,  # Base64 encoded
+        attachment_filename: str,
+        attachment_mimetype: str,
+        from_email: str = 'me'
+    ) -> Dict:
+        """Send an email with a single attachment"""
+        try:
+            # Create multipart message
+            message = MIMEMultipart()
+            message['to'] = to
+            message['subject'] = subject
+            
+            # Attach body
+            message.attach(MIMEText(body, 'html'))
+            
+            # Attach file
+            attachment = MIMEBase('application', 'octet-stream')
+            attachment.set_payload(base64.b64decode(attachment_data))
+            encoders.encode_base64(attachment)
+            attachment.add_header(
+                'Content-Disposition',
+                f'attachment; filename="{attachment_filename}"'
+            )
+            attachment.add_header('Content-Type', attachment_mimetype)
+            message.attach(attachment)
+            
+            # Encode and send
+            raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
+            
+            send_message = self.service.users().messages().send(
+                userId='me',
+                body={'raw': raw_message}
+            ).execute()
+            
+            print(f"✓ Email with attachment sent successfully: {send_message['id']}")
+            return send_message
+        except Exception as e:
+            print(f"✗ Error sending message with attachment: {e}")
+            raise
+    
+    def get_attachment(self, message_id: str, attachment_id: str) -> str:
+        """Get attachment data by ID, returns base64 encoded data"""
+        try:
+            attachment = self.service.users().messages().attachments().get(
+                userId='me',
+                messageId=message_id,
+                id=attachment_id
+            ).execute()
+            
+            return attachment['data']  # Already base64 encoded
+        except Exception as e:
+            print(f"✗ Error getting attachment: {e}")
             raise
