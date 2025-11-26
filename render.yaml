@@ -10,7 +10,7 @@ services:
     name: qmail-backend
     runtime: python
     region: oregon
-    plan: free
+    plan: starter
     branch: main
     buildCommand: |
       pip install --upgrade pip
@@ -43,7 +43,7 @@ services:
   - type: web
     name: qmail-frontend
     runtime: static
-    plan: free
+    plan: starter
     branch: main
     buildCommand: |
       npm install
