@@ -4,9 +4,6 @@ services:
     name: qmail-database
     plan: free
     region: oregon
-    databaseName: qmail_db
-    databaseUser: qmail_user
-    ipAllowList: []
 
   # Backend API Service
   - type: web
