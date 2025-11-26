@@ -4,3 +4,4 @@ Thumbs.db
 *.log
 .vscode/
 __pycache__/
+env.example
