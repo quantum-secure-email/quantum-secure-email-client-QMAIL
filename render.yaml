@@ -1,10 +1,10 @@
-services:
-  # PostgreSQL Database
-  - type: pserv
-    name: qmail-database
+databases:
+  - name: qmail-database
     plan: free
-    region: oregon
+    databaseName: qmail_db
+    user: qmail_user
 
+services:
   # Backend API Service
   - type: web
     name: qmail-backend
@@ -43,7 +43,6 @@ services:
   - type: web
     name: qmail-frontend
     runtime: static
-    region: oregon
     plan: free
     branch: main
     buildCommand: |
