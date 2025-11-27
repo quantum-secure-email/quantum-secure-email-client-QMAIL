@@ -6,8 +6,8 @@ WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
-    python3.11 \
-    python3.11-venv \
+    python3 \
+    python3-venv \
     python3-pip \
     git \
     cmake \
@@ -34,7 +34,7 @@ RUN ldconfig
 COPY requirements.txt .
 
 # Create virtual environment and install Python dependencies
-RUN python3.11 -m venv /opt/venv
+RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 RUN pip install --upgrade pip && \
     pip install -r requirements.txt
