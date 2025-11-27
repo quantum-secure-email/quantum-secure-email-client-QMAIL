@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# Environment files
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+*.md
+!README.md
+
+# Tests
+tests/
+*.test.py
+
+# Node (if any frontend files accidentally in backend)
+node_modules/
+dist/
+.vite/
+
+# Database
+*.db
+*.sqlite
+
+# Logs
+*.log
+
+# Alembic (we only need migrations, not the whole directory)
+alembic.ini
+
+# Temporary files
+*.tmp
+*.bak
