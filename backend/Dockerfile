@@ -25,22 +25,26 @@ RUN git clone --depth 1 --branch main https://github.com/open-quantum-safe/liboq
     ninja && \
     ninja install && \
     cd ../.. && \
-    rm -rf liboqs
-
-# Update library cache
-RUN ldconfig
-
-# Set library path for runtime
-ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+    rm -rf liboqs && \
+    # Add library path to ld.so.conf
+    echo "/usr/local/lib" > /etc/ld.so.conf.d/liboqs.conf && \
+    ldconfig && \
+    # Verify liboqs is installed
+    ldconfig -p | grep liboqs
 
 # Copy requirements first (for better caching)
 COPY requirements.txt .
+
+# Set library path environment variable
+ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
 
 # Create virtual environment and install Python dependencies
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 RUN pip install --upgrade pip && \
-    pip install -r requirements.txt
+    pip install -r requirements.txt && \
+    # Verify liboqs-python can load the library
+    python -c "import oqs; print('liboqs loaded successfully')"
 
 # Copy application code
 COPY . .
