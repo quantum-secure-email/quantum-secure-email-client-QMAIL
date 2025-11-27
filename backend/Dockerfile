@@ -30,6 +30,9 @@ RUN git clone --depth 1 --branch main https://github.com/open-quantum-safe/liboq
 # Update library cache
 RUN ldconfig
 
+# Set library path for runtime
+ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+
 # Copy requirements first (for better caching)
 COPY requirements.txt .
 
@@ -45,8 +48,11 @@ COPY . .
 # Make startup script executable
 RUN chmod +x startup.sh
 
-# Expose port
+# Expose port (Render will override with its own PORT env var)
 EXPOSE 8000
+
+# Set default PORT if not provided by platform
+ENV PORT=8000
 
 # Run the startup script
 CMD ["./startup.sh"]
