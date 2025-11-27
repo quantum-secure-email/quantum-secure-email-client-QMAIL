@@ -21,16 +21,17 @@ RUN git clone --depth 1 --branch main https://github.com/open-quantum-safe/liboq
     cd liboqs && \
     mkdir build && \
     cd build && \
-    cmake -GNinja -DCMAKE_INSTALL_PREFIX=/usr/local .. && \
+    cmake -GNinja \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DBUILD_SHARED_LIBS=ON \
+        .. && \
     ninja && \
     ninja install && \
     cd ../.. && \
     rm -rf liboqs && \
     # Add library path to ld.so.conf
     echo "/usr/local/lib" > /etc/ld.so.conf.d/liboqs.conf && \
-    ldconfig && \
-    # Verify liboqs is installed
-    ldconfig -p | grep liboqs
+    ldconfig
 
 # Copy requirements first (for better caching)
 COPY requirements.txt .
