@@ -16,15 +16,8 @@ interface SentEmail {
   encryption_level: 1 | 2 | 3;
 }
 
-const getTokenFromCookie = (): string | null => {
-  const cookies = document.cookie.split(';');
-  for (const cookie of cookies) {
-    const [name, value] = cookie.trim().split('=');
-    if (name === 'session_token') {
-      return value;
-    }
-  }
-  return null;
+const getAuthToken = (): string | null => {
+  return localStorage.getItem('auth_token');
 };
 
 const SentPage = () => {
@@ -40,7 +33,7 @@ const SentPage = () => {
 
   const fetchSentEmails = async () => {
     try {
-      const token = getTokenFromCookie();
+      const token = getAuthToken();
       const response = await fetch(`${apiUrl}/api/sent`, {
         headers: {
           'Authorization': `Bearer ${token}`,

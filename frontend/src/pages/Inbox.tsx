@@ -27,15 +27,8 @@ interface Email {
   }>;
 }
 
-const getTokenFromCookie = (): string | null => {
-  const cookies = document.cookie.split(';');
-  for (const cookie of cookies) {
-    const [name, value] = cookie.trim().split('=');
-    if (name === 'session_token') {
-      return value;
-    }
-  }
-  return null;
+const getAuthToken = (): string | null => {
+  return localStorage.getItem('auth_token');
 };
 
 const InboxUpdated = () => {
@@ -52,7 +45,7 @@ const InboxUpdated = () => {
 
   const fetchEmails = async () => {
     try {
-      const token = getTokenFromCookie();
+      const token = getAuthToken();
       const response = await fetch(`${apiUrl}/api/inbox`, {
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -153,7 +146,7 @@ const InboxUpdated = () => {
     if (!email.attachments || email.attachments.length === 0) return;
     
     const attachment = email.attachments[0];
-    const token = getTokenFromCookie();
+    const token = getAuthToken();
     
     try {
       console.log(`📎 Downloading attachment: ${attachment.filename}`);

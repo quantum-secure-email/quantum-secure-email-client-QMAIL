@@ -23,15 +23,8 @@ import { getMostRecentPrivateKey, getGroupKey, storeGroupKey } from '@/utils/ind
 import { base64ToUint8Array } from '@/utils/decryptionUtils';
 
 // Helper to get token from cookie
-const getTokenFromCookie = (): string | null => {
-  const cookies = document.cookie.split(';');
-  for (const cookie of cookies) {
-    const [name, value] = cookie.trim().split('=');
-    if (name === 'session_token') {
-      return value;
-    }
-  }
-  return null;
+const getAuthToken = (): string | null => {
+  return localStorage.getItem('auth_token');
 };
 
 // Debounce function
@@ -109,7 +102,7 @@ const ComposeEmail = () => {
       }
 
       setCheckingRecipient(true);
-      const token = getTokenFromCookie();
+      const token = getAuthToken();
 
       try {
         const response = await fetch(
@@ -147,7 +140,7 @@ const ComposeEmail = () => {
   useEffect(() => {
     const fetchGroups = async () => {
       try {
-        const token = getTokenFromCookie();
+        const token = getAuthToken();
         const response = await fetch(`${apiUrl}/api/groups/list`, {
           headers: {
             'Authorization': `Bearer ${token}`,
@@ -245,7 +238,7 @@ const ComposeEmail = () => {
     setSending(true);
 
     try {
-      const token = getTokenFromCookie();
+      const token = getAuthToken();
 
       // CRITICAL: Always fetch fresh group key when SENDING (never use cache)
       // This ensures we use the latest key after any key rotations
@@ -423,7 +416,7 @@ nonce_b64: ${nonceB64}`;
     setSending(true);
 
     try {
-      const token = getTokenFromCookie();
+      const token = getAuthToken();
       
       // Prepare attachment data if file is selected
       let attachmentData: any = {};

@@ -79,7 +79,7 @@ export const decryptLevel2Email = async (emailBody: string): Promise<string> => 
 
     // Call backend to perform KEM decapsulation
     const apiUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-    const token = getTokenFromCookie();
+    const token = getAuthToken();
 
     const response = await fetch(`${apiUrl}/api/decrypt/level2`, {
       method: 'POST',
@@ -153,7 +153,7 @@ export const decryptLevel3Email = async (emailBody: string): Promise<string> => 
 
     // Call backend to unwrap OTP
     const apiUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-    const token = getTokenFromCookie();
+    const token = getAuthToken();
 
     const response = await fetch(`${apiUrl}/api/decrypt/level3`, {
       method: 'POST',
@@ -208,7 +208,7 @@ export const decryptGroupKey = async (groupId: number): Promise<string> => {
 
     // Get encrypted group key from server
     const apiUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-    const token = getTokenFromCookie();
+    const token = getAuthToken();
 
     const response = await fetch(`${apiUrl}/api/groups/${groupId}/key`, {
       method: 'GET',
@@ -405,7 +405,7 @@ export const decryptAttachment = async (
     
     // Call backend to perform KEM decapsulation
     const apiUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-    const token = getTokenFromCookie();
+    const token = getAuthToken();
     
     const response = await fetch(`${apiUrl}/api/decrypt/level2`, {
       method: 'POST',
@@ -494,13 +494,6 @@ export const decryptEmail = async (emailBody: string): Promise<string> => {
 };
 
 // Helper to get cookie token
-const getTokenFromCookie = (): string | null => {
-  const cookies = document.cookie.split(';');
-  for (const cookie of cookies) {
-    const [name, value] = cookie.trim().split('=');
-    if (name === 'session_token') {
-      return value;
-    }
-  }
-  return null;
+const getAuthToken = (): string | null => {
+  return localStorage.getItem('auth_token');
 };

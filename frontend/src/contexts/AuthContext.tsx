@@ -30,15 +30,8 @@ interface AuthProviderProps {
 }
 
 // Helper to get token from cookie
-const getTokenFromCookie = (): string | null => {
-  const cookies = document.cookie.split(';');
-  for (const cookie of cookies) {
-    const [name, value] = cookie.trim().split('=');
-    if (name === 'session_token') {
-      return value;
-    }
-  }
-  return null;
+const getAuthToken = (): string | null => {
+  return localStorage.getItem('auth_token');
 };
 
 export const AuthProvider = ({ children }: AuthProviderProps) => {
@@ -50,7 +43,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     // Check authentication status from backend
     const checkAuth = async () => {
       try {
-        const token = getTokenFromCookie();
+        const token = getAuthToken();
         
         if (!token) {
           console.log('No session token found');
@@ -96,7 +89,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
   const logout = async () => {
     try {
-      const token = getTokenFromCookie();
+      const token = getAuthToken();
       
       await fetch(`${apiUrl}/auth/logout`, {
         method: 'POST',
