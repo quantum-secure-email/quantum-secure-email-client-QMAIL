@@ -35,22 +35,32 @@ const DeviceSetup = () => {
       setProgress(30);
       toast.info('Generating encryption keys...');
 
-      const token = getTokenFromCookie();
+      // Get token from localStorage (not cookies)
+      const token = localStorage.getItem('auth_token');
+      
+      if (!token) {
+        throw new Error('Not authenticated - no token found');
+      }
+
+      console.log('Token found, generating keypair...');
       
       // Call backend to generate keypair
       const keypairResponse = await fetch(`${apiUrl}/device/generate-keypair`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
         },
-        credentials: 'include',
       });
 
       if (!keypairResponse.ok) {
+        const errorText = await keypairResponse.text();
+        console.error('Keypair generation failed:', keypairResponse.status, errorText);
         throw new Error('Failed to generate keypair on server');
       }
 
       const { public_key_b64: publicKeyB64, private_key_b64: privateKeyB64 } = await keypairResponse.json();
+      console.log('Keypair generated successfully');
 
       setProgress(60);
 
@@ -58,13 +68,14 @@ const DeviceSetup = () => {
       setStatus('registering');
       toast.info('Registering device...');
 
+      console.log('Registering device with public key...');
+
       const response = await fetch(`${apiUrl}/device/register`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
         },
-        credentials: 'include',
         body: JSON.stringify({
           pubkey_b64: publicKeyB64,
           device_name: getBrowserName(),
@@ -73,15 +84,19 @@ const DeviceSetup = () => {
       });
 
       if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Device registration failed:', response.status, errorText);
         throw new Error('Failed to register device');
       }
 
       const data = await response.json();
       const deviceId = data.device_id;
+      console.log('Device registered successfully:', deviceId);
 
       setProgress(80);
 
       // Step 4: Store private key locally in IndexedDB
+      console.log('Storing private key in IndexedDB...');
       await storePrivateKey({
         device_id: deviceId,
         private_key_b64: privateKeyB64,
@@ -89,6 +104,7 @@ const DeviceSetup = () => {
         created_at: new Date().toISOString(),
         algo: 'Kyber512'
       });
+      console.log('Private key stored successfully');
 
       setProgress(100);
       setStatus('complete');
@@ -189,17 +205,6 @@ const DeviceSetup = () => {
       </DialogContent>
     </Dialog>
   );
-};
-
-const getTokenFromCookie = (): string | null => {
-  const cookies = document.cookie.split(';');
-  for (const cookie of cookies) {
-    const [name, value] = cookie.trim().split('=');
-    if (name === 'session_token') {
-      return value;
-    }
-  }
-  return null;
 };
 
 const getBrowserName = (): string => {
