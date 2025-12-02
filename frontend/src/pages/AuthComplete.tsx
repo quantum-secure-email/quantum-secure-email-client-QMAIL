@@ -12,25 +12,42 @@ const AuthComplete = () => {
       const token = searchParams.get('token');
       
       if (!token) {
+        console.error('No token in URL');
         navigate('/?error=no_token');
         return;
       }
 
-      // Store token as cookie
-      document.cookie = `session_token=${token}; path=/; max-age=604800; SameSite=Lax`;
+      console.log('Token received, length:', token.length);
       
-      // Get user info
+      // Store token in localStorage
+      localStorage.setItem('auth_token', token);
+      
+      // Get user info using Authorization header
       const apiUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-      const response = await fetch(`${apiUrl}/auth/me`, {
-        credentials: 'include',
-      });
+      
+      try {
+        const response = await fetch(`${apiUrl}/auth/me`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        });
 
-      if (response.ok) {
-        const userData = await response.json();
-        login(userData);
-        navigate('/dashboard');
-      } else {
-        navigate('/?error=auth_failed');
+        if (response.ok) {
+          const userData = await response.json();
+          console.log('User authenticated:', userData.email);
+          login(userData);
+          navigate('/dashboard');
+        } else {
+          const errorText = await response.text();
+          console.error('Auth failed:', response.status, errorText);
+          localStorage.removeItem('auth_token');
+          navigate('/?error=auth_failed');
+        }
+      } catch (error) {
+        console.error('Network error:', error);
+        localStorage.removeItem('auth_token');
+        navigate('/?error=network_error');
       }
     };
 

@@ -1,16 +1,17 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Header
 from fastapi.responses import RedirectResponse, JSONResponse
 from sqlalchemy.orm import Session
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 from google_auth_oauthlib.flow import Flow
 from datetime import datetime, timedelta
+from typing import Optional
 import os
 from dotenv import load_dotenv
 
 from database import get_db
 from models import User, OAuthToken
-from auth_utils import create_access_token
+from auth_utils import create_access_token, verify_token
 from dependencies import get_current_user
 
 load_dotenv()
@@ -78,11 +79,11 @@ async def callback(code: str, state: str, db: Session = Depends(get_db)):
             state=state
         )
         
-        # Fetch token - THIS LINE WAS MISSING!
+        # Fetch token
         flow.fetch_token(code=code)
         credentials = flow.credentials
         
-        # Get user info from ID token (skip audience check - already verified via OAuth)
+        # Get user info from ID token
         idinfo = id_token.verify_oauth2_token(
             credentials.id_token,
             google_requests.Request()
@@ -154,11 +155,16 @@ async def callback(code: str, state: str, db: Session = Depends(get_db)):
         
         db.commit()
         
-        # Create session token (JWT)
-        session_token = create_access_token(data={"sub": str(user.id)})
+        # Create session token (JWT) with user info
+        session_token = create_access_token(data={
+            "sub": str(user.id),
+            "email": email,
+            "name": name,
+            "picture": picture
+        })
         print(f"✓ Created session token for user: {email}")
         
-        # Redirect to frontend with session cookie
+        # Redirect to frontend with session token
         redirect_url = f"{FRONTEND_URL}/auth/complete?token={session_token}"
         print(f"✓✓✓ Redirecting to: {redirect_url}")
         return RedirectResponse(url=redirect_url)
@@ -178,12 +184,56 @@ async def logout(current_user: User = Depends(get_current_user)):
     return response
 
 
+# NEW: Updated /auth/me to support Authorization header
 @router.get("/me")
-async def get_current_user_info(current_user: User = Depends(get_current_user)):
-    """Get current user information"""
+async def get_current_user_info(
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+):
+    """Get current user information from Authorization header"""
+    # Extract token from Authorization header
+    if not authorization or not authorization.startswith('Bearer '):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated - Authorization header required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    token = authorization.replace('Bearer ', '')
+    print(f"📍 Token received in /auth/me (length: {len(token)})")
+    
+    # Verify token
+    payload = verify_token(token)
+    if not payload:
+        print(f"❌ Token verification failed in /auth/me")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    print(f"✓ Token verified in /auth/me, payload: {payload}")
+    
+    # Get user from database
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token payload"
+        )
+    
+    user = db.query(User).filter(User.id == int(user_id)).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    print(f"✓ User found in /auth/me: {user.email}")
+    
     return {
-        "id": current_user.id,
-        "email": current_user.email,
-        "name": current_user.name,
-        "picture": current_user.picture
+        "id": user.id,
+        "email": user.email,
+        "name": user.name,
+        "picture": user.picture
     }

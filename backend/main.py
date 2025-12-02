@@ -192,14 +192,26 @@ app.include_router(decrypt.router)
 app.include_router(sent.router)
 app.include_router(groups.router)
 
-# CORS: allow your frontend origins (add your production origin later)
-FRONTEND_ORIGINS = os.environ.get("FRONTEND_ORIGINS", "http://localhost:8080,http://localhost:3000").split(",")
+# CORS: allow your frontend origins
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:8080")
+ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://localhost:8080",
+    "http://localhost:3000",
+    FRONTEND_URL,  # Production frontend URL from environment
+]
+# Remove duplicates and empty strings
+ALLOWED_ORIGINS = list(set([o.strip() for o in ALLOWED_ORIGINS if o.strip()]))
+
+print(f"🌐 CORS allowed origins: {ALLOWED_ORIGINS}")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o.strip() for o in FRONTEND_ORIGINS if o.strip()],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # ---------- Health / PQC probe ----------
@@ -233,32 +245,10 @@ def health():
     return {"ok": True, **pqc_available_probe()}
 
 # ---------- Device endpoints ----------
+# Commented out - these are handled by routers/devices.py
 # @app.post("/device/register")
-# def register_device(req: DeviceRegister):
-#     devices = get_devices()
-#     # enforce single pubkey -> one device id
-#     for did, info in devices.items():
-#         if info.get("pubkey_b64") == req.pubkey_b64:
-#             return {"device_id": did, "status": "already_registered", "note": "pubkey already registered"}
-#     did = req.device_id or str(uuid.uuid4())
-#     devices[did] = {"pubkey_b64": req.pubkey_b64, "algo": req.algo or (kem.kem_name if kem else "unknown"), "meta": req.meta}
-#     save_devices(devices)
-#     return {"device_id": did, "status": "registered"}
-
 # @app.get("/device/{device_id}")
-# def get_device(device_id: str):
-#     devices = get_devices()
-#     d = devices.get(device_id)
-#     if not d:
-#         raise HTTPException(status_code=404, detail="device not found")
-#     return {"device_id": device_id, **d}
-
 # @app.get("/device/pubkey/{device_id}")
-# def device_pubkey(device_id: str):
-#     d = get_devices().get(device_id)
-#     if not d:
-#         raise HTTPException(status_code=404, detail="device not found")
-#     return {"device_id": device_id, "pubkey_b64": d["pubkey_b64"], "algo": d.get("algo")}
 
 # ---------- Encrypt endpoints ----------
 @app.post("/encrypt")
@@ -381,7 +371,7 @@ def make_raw_message(from_addr: str, to_addr: str, subject: str, body_text: str)
     return raw_b64
 
 @app.post("/verify-token")
-def verify_token(payload: Dict[str, Any] = Body(...)):
+def verify_token_endpoint(payload: Dict[str, Any] = Body(...)):
     token = payload.get("access_token")
     if not token:
         raise HTTPException(status_code=400, detail="access_token required")
@@ -402,15 +392,14 @@ def send_email(req: SendEmailReq):
     info = ti.json()
     scopes = info.get("scope", "")
     required = {
-    "https://www.googleapis.com/auth/gmail.send",
-    "https://www.googleapis.com/auth/gmail.modify",
-    # optional: accept full mailbox scope too
-    "https://mail.google.com/"
-}
+        "https://www.googleapis.com/auth/gmail.send",
+        "https://www.googleapis.com/auth/gmail.modify",
+        # optional: accept full mailbox scope too
+        "https://mail.google.com/"
+    }
     present = set(scopes.split())  # tokeninfo returns lowercase space-separated list
     if not (present & required):
         raise HTTPException(status_code=403, detail=f"insufficient scopes on token: {scopes}")
-
 
     raw_b64 = make_raw_message(req.from_email, req.to_email, req.subject or "", req.body or "")
     gmail_send_url = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
