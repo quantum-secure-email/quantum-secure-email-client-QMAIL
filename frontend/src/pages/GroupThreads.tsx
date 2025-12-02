@@ -33,6 +33,10 @@ interface GroupDetails {
   members: GroupMember[];
 }
 
+const getAuthToken = (): string | null => {
+  return localStorage.getItem('auth_token');
+};
+
 const GroupThreads = () => {
   const [groups, setGroups] = useState<Group[]>([]);
   const [selectedGroup, setSelectedGroup] = useState<GroupDetails | null>(null);
@@ -47,7 +51,11 @@ const GroupThreads = () => {
   // Fetch all groups
   const fetchGroups = async () => {
     try {
+      const token = getAuthToken();
       const response = await fetch(`${apiUrl}/api/groups/list`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
         credentials: 'include',
       });
 
@@ -66,7 +74,11 @@ const GroupThreads = () => {
   const fetchGroupDetails = async (groupId: number) => {
     setLoading(true);
     try {
+      const token = getAuthToken();
       const response = await fetch(`${apiUrl}/api/groups/${groupId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
         credentials: 'include',
       });
 
@@ -93,9 +105,13 @@ const GroupThreads = () => {
 
     setLoading(true);
     try {
+      const token = getAuthToken();
       const response = await fetch(`${apiUrl}/api/groups/create`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
         credentials: 'include',
         body: JSON.stringify({ name: newGroupName }),
       });
@@ -127,9 +143,13 @@ const GroupThreads = () => {
 
     setLoading(true);
     try {
+      const token = getAuthToken();
       const response = await fetch(`${apiUrl}/api/groups/${selectedGroup.id}/members/add`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
         credentials: 'include',
         body: JSON.stringify({ email: newMemberEmail }),
       });
@@ -158,8 +178,12 @@ const GroupThreads = () => {
 
     setLoading(true);
     try {
+      const token = getAuthToken();
       const response = await fetch(`${apiUrl}/api/groups/${groupId}/leave`, {
         method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
         credentials: 'include',
       });
 
@@ -185,8 +209,12 @@ const GroupThreads = () => {
 
     setLoading(true);
     try {
+      const token = getAuthToken();
       const response = await fetch(`${apiUrl}/api/groups/${groupId}`, {
         method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
         credentials: 'include',
       });
 
